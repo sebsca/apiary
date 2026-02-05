@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Apiary Logbook</title>
+  <link rel="stylesheet" href="styles.css"/>
+</head>
+<body>
+  <header class="topbar">
+    <button id="menu-toggle" class="hamburger" aria-label="Open menu" aria-expanded="false" aria-controls="topbar-menu">
+      <span></span>
+      <span></span>
+      <span></span>
+    </button>
+    <div class="brand" role="button" tabindex="0" onclick="location.hash='#/';">Apiary Logbook</div>
+    <nav class="tabs topbar-tabs">
+      <a href="#/" id="tab-standorte">Locations</a>
+      <a href="#/queens" id="tab-queens">Queens</a>
+    </nav>
+    <div class="topbar-right">
+      <div class="topbar-controls">
+        <button id="topbar-back" class="btn topbar-back" hidden>Back</button>
+      </div>
+    </div>
+    <div id="topbar-actions" class="topbar-actions" hidden></div>
+    <div id="topbar-menu" class="menu-panel">
+      <div class="auth">
+        <span id="auth-status" class="auth-status">Checking...</span>
+        <button id="auth-admin" class="btn" style="display:none">User Administration</button>
+        <button id="auth-account" class="btn" style="display:none">Change password</button>
+        <button id="auth-action" class="btn">Log in</button>
+      </div>
+    </div>
+  </header>
+
+  <main id="app" class="container">
+    <div class="card">
+      <div class="skeleton"></div>
+    </div>
+  </main>
+
+  <footer class="footer">
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
