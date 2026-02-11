@@ -347,6 +347,7 @@ a:hover{text-decoration:underline}
 .hive-visits-table .hive-visit-row td{
   padding:2px 0px;
   margin:0;
+  border-bottom:none;
 }
 .table.hive-visits-table tr:hover td{
   background:transparent;
@@ -368,7 +369,7 @@ a:hover{text-decoration:underline}
   font-weight:700;
 }
 .hive-visits-table .hive-visit-row-3 td{
-  border-bottom:1px solid var(--border);
+  border-bottom:none;
 }
 .hive-visits-table .hive-visit-row-4 td{
   padding:0;
