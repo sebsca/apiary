@@ -1,6 +1,60 @@
 // app.js - vanilla SPA
 const API_URL = './api.php';
 
+// ============================================================================
+// CONFIGURATION
+// ============================================================================
+
+const CONFIG = {
+  BREAKPOINT_MOBILE: 720,
+  TIMEOUTS: {
+    SHORT: 200,
+    MEDIUM: 250,
+    LONG: 350
+  },
+  DEFAULTS: {
+    RESET_PASSWORD: '12345678',
+    UNKNOWN_VALUE: 'k.A.'
+  },
+  VALIDATION: {
+    MIN_PASSWORD_LENGTH: 7
+  }
+};
+
+// ============================================================================
+// UTILITIES
+// ============================================================================
+
+// Normalize form data: convert empty strings to null
+const normalizeFormData = (data) => {
+  Object.keys(data).forEach(k => {
+    if (data[k] === '') data[k] = null;
+  });
+  return data;
+};
+
+// Handle errors with logging and optional UI feedback
+const handleError = (err, msgElement, fallback = 'An error occurred') => {
+  console.error(err);
+  if (msgElement) msgElement.textContent = `Error: ${err?.message || fallback}`;
+};
+
+// Handle API response errors (consolidates apiGet/apiPost error handling)
+const handleApiResponse = async (res, opts = {}) => {
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) {
+    setAuth(null);
+    if (!opts.suppressAuthRedirect) redirectToLogin();
+    throw new Error(data.error || 'Unauthorized');
+  }
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+};
+
+// ============================================================================
+// DOM REFERENCES
+// ============================================================================
+
 const app = document.getElementById('app');
 const tabStandorte = document.getElementById('tab-standorte');
 const tabQueens = document.getElementById('tab-queens');
@@ -217,14 +271,7 @@ async function apiGet(params, opts = {}) {
     headers: { 'Accept': 'application/json' },
     credentials: 'same-origin'
   });
-  const data = await res.json().catch(() => ({}));
-  if (res.status === 401) {
-    setAuth(null);
-    if (!opts.suppressAuthRedirect) redirectToLogin();
-    throw new Error(data.error || 'Unauthorized');
-  }
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-  return data;
+  return handleApiResponse(res, opts);
 }
 
 async function apiPost(params, bodyObj, opts = {}) {
@@ -238,14 +285,7 @@ async function apiPost(params, bodyObj, opts = {}) {
     body: JSON.stringify(bodyObj ?? {}),
     credentials: 'same-origin'
   });
-  const data = await res.json().catch(() => ({}));
-  if (res.status === 401) {
-    setAuth(null);
-    if (!opts.suppressAuthRedirect) redirectToLogin();
-    throw new Error(data.error || 'Unauthorized');
-  }
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-  return data;
+  return handleApiResponse(res, opts);
 }
 
 function parseRoute() {
@@ -524,10 +564,7 @@ function wireQueenForm({ queenId, mode='update' }) {
     e.preventDefault();
     msg.textContent = 'Saving…';
 
-    const data = Object.fromEntries(new FormData(form).entries());
-    Object.keys(data).forEach(k => {
-      if (data[k] === '') data[k] = null;
-    });
+    const data = normalizeFormData(Object.fromEntries(new FormData(form).entries()));
 
     try {
       if (mode === 'create') {
@@ -797,8 +834,9 @@ async function renderNewVisit(hiveId) {
     apiGet({ action:'queen_options' })
   ]);
   const d = defaultsRes.defaults;
+  const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
   const prefill = {
-    Datum: '',
+    Datum: today,
     Standort: d?.Standort ?? '',
     Queen_ID: d?.Queen_ID ?? null,
     Aufbau: d?.Aufbau ?? '',
@@ -1074,11 +1112,7 @@ function wireVisitForm({ mode, hiveId, visitId }) {
     e.preventDefault();
     msg.textContent = 'Saving…';
 
-    const data = Object.fromEntries(new FormData(form).entries());
-    // Normalize empty strings to null for optional fields
-    Object.keys(data).forEach(k => {
-      if (data[k] === '') data[k] = null;
-    });
+    const data = normalizeFormData(Object.fromEntries(new FormData(form).entries()));
 
     try {
       if (mode === 'create') {
@@ -1486,6 +1520,15 @@ async function router() {
   // default
   return renderStandorte();
 }
+
+// Global event delegation for navigation and actions
+document.addEventListener('click', (e) => {
+  const target = e.target.closest('[data-navigate]');
+  if (target) {
+    e.preventDefault();
+    location.hash = target.dataset.navigate;
+  }
+});
 
 authReady = initAuth();
 window.addEventListener('hashchange', router);

@@ -9,6 +9,9 @@ if ($https) {
 }
 session_start();
 
+// Security: Content Security Policy
+header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'");
+
 header('Content-Type: application/json; charset=utf-8');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type');
