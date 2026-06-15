@@ -942,18 +942,22 @@ function visitFormHtml({ mode, hiveId, visitId, visit, queens, readOnly=false })
 
       <div class="field">
         <label>Colony strength</label>
-        <div class="hstack" style="gap:8px; align-items:center; justify-content:flex-start;">
-          <label class="pill" style="cursor:pointer;">
-            <input type="radio" name="Volksstaerke" value="" ${vsNorm === '' ? 'checked' : ''}/> k.A.
+        <div class="segmented-button segmented-button-neutral segmented-ka-soft" role="group" aria-label="Colony strength">
+          <label>
+            <input type="radio" name="Volksstaerke" value="" ${vsNorm === '' ? 'checked' : ''}/>
+            <span>k.A.</span>
           </label>
-          <label class="pill" style="cursor:pointer;">
-            <input type="radio" name="Volksstaerke" value="+" ${vsNorm === '+' ? 'checked' : ''}/> +
+          <label>
+            <input type="radio" name="Volksstaerke" value="+" ${vsNorm === '+' ? 'checked' : ''}/>
+            <span>+</span>
           </label>
-          <label class="pill" style="cursor:pointer;">
-            <input type="radio" name="Volksstaerke" value="++" ${vsNorm === '++' ? 'checked' : ''}/> ++
+          <label>
+            <input type="radio" name="Volksstaerke" value="++" ${vsNorm === '++' ? 'checked' : ''}/>
+            <span>++</span>
           </label>
-          <label class="pill" style="cursor:pointer;">
-            <input type="radio" name="Volksstaerke" value="+++" ${vsNorm === '+++' ? 'checked' : ''}/> +++
+          <label>
+            <input type="radio" name="Volksstaerke" value="+++" ${vsNorm === '+++' ? 'checked' : ''}/>
+            <span>+++</span>
           </label>
         </div>
       </div>
@@ -964,79 +968,88 @@ function visitFormHtml({ mode, hiveId, visitId, visit, queens, readOnly=false })
       </div>
 
       <div class="field">
-        <label>Brood eggs</label>
-        <label class="pill" style="justify-content:flex-start; gap:8px; cursor:pointer;">
-          <input type="hidden" name="Brut_Stifte" value=""/>
-          <input type="checkbox" name="Brut_Stifte" value="+" ${visit.Brut_Stifte === '+' ? 'checked' : ''}/>
-          +
-        </label>
-      </div>
-
-      <div class="field">
-        <label>Brood open</label>
-        <label class="pill" style="justify-content:flex-start; gap:8px; cursor:pointer;">
-          <input type="hidden" name="Brut_offen" value=""/>
-          <input type="checkbox" name="Brut_offen" value="+" ${visit.Brut_offen === '+' ? 'checked' : ''}/>
-          +
-        </label>
-      </div>
-
-      <div class="field">
-        <label>Brood closed</label>
-        <label class="pill" style="justify-content:flex-start; gap:8px; cursor:pointer;">
-          <input type="hidden" name="Brut_verdeckelt" value=""/>
-          <input type="checkbox" name="Brut_verdeckelt" value="+" ${visit.Brut_verdeckelt === '+' ? 'checked' : ''}/>
-          +
-        </label>
+        <label>Brood</label>
+        <div class="segmented-button segmented-checkboxes" role="group" aria-label="Brood">
+          <label>
+            <input type="hidden" name="Brut_Stifte" value=""/>
+            <input type="checkbox" name="Brut_Stifte" value="+" ${visit.Brut_Stifte === '+' ? 'checked' : ''}/>
+            <span>Eggs</span>
+          </label>
+          <label>
+            <input type="hidden" name="Brut_offen" value=""/>
+            <input type="checkbox" name="Brut_offen" value="+" ${visit.Brut_offen === '+' ? 'checked' : ''}/>
+            <span>Open</span>
+          </label>
+          <label>
+            <input type="hidden" name="Brut_verdeckelt" value=""/>
+            <input type="checkbox" name="Brut_verdeckelt" value="+" ${visit.Brut_verdeckelt === '+' ? 'checked' : ''}/>
+            <span>Closed</span>
+          </label>
+        </div>
       </div>
 
       <div class="field">
         <label>Temperament</label>
-        <div class="hstack" style="gap:8px; align-items:center; justify-content:flex-start;">
-          <label class="pill" style="cursor:pointer;">
-            <input type="radio" name="Sanftmut" value="" ${tmNorm === '' ? 'checked' : ''}/> k.A.
+        <div class="segmented-button segmented-ka-soft" role="group" aria-label="Temperament">
+          <label>
+            <input type="radio" name="Sanftmut" value="" ${tmNorm === '' ? 'checked' : ''}/>
+            <span>k.A.</span>
           </label>
-          <label class="pill" style="cursor:pointer;">
-            <input type="radio" name="Sanftmut" value="+" ${tmNorm === '+' ? 'checked' : ''}/> +
+          <label>
+            <input type="radio" name="Sanftmut" value="+" ${tmNorm === '+' ? 'checked' : ''}/>
+            <span>+</span>
           </label>
-          <label class="pill" style="cursor:pointer;">
-            <input type="radio" name="Sanftmut" value="-" ${tmNorm === '-' ? 'checked' : ''}/> -
+          <label>
+            <input type="radio" name="Sanftmut" value="-" ${tmNorm === '-' ? 'checked' : ''}/>
+            <span>-</span>
           </label>
         </div>
       </div>
 
       <div class="field">
         <label>Comb seat</label>
-        <div class="hstack" style="gap:8px; align-items:center; justify-content:flex-start;">
-          <label class="pill" style="cursor:pointer;">
-            <input type="radio" name="Wabensitz" value="" ${wsNorm === '' ? 'checked' : ''}/> k.A.
+        <div class="segmented-button segmented-ka-soft" role="group" aria-label="Comb seat">
+          <label>
+            <input type="radio" name="Wabensitz" value="" ${wsNorm === '' ? 'checked' : ''}/>
+            <span>k.A.</span>
           </label>
-          <label class="pill" style="cursor:pointer;">
-            <input type="radio" name="Wabensitz" value="+" ${wsNorm === '+' ? 'checked' : ''}/> +
+          <label>
+            <input type="radio" name="Wabensitz" value="+" ${wsNorm === '+' ? 'checked' : ''}/>
+            <span>+</span>
           </label>
-          <label class="pill" style="cursor:pointer;">
-            <input type="radio" name="Wabensitz" value="-" ${wsNorm === '-' ? 'checked' : ''}/> -
+          <label>
+            <input type="radio" name="Wabensitz" value="-" ${wsNorm === '-' ? 'checked' : ''}/>
+            <span>-</span>
           </label>
         </div>
       </div>
 
       <div class="field">
         <label>Swarm tendency</label>
-        <div class="hstack" style="gap:8px; align-items:center; justify-content:flex-start; flex-wrap:wrap;">
-          <label class="pill" style="cursor:pointer;">
-            <input type="radio" name="Schwarmneigung" value="" ${swNorm === '' ? 'checked' : ''}/> k.A.
+        <div class="segmented-button segmented-button-neutral segmented-button-fluid segmented-ka-soft" role="group" aria-label="Swarm tendency">
+          <label>
+            <input type="radio" name="Schwarmneigung" value="" ${swNorm === '' ? 'checked' : ''}/>
+            <span>k.A.</span>
           </label>
-          <label class="pill" style="cursor:pointer;">
-            <input type="radio" name="Schwarmneigung" value="WZ b" ${swNorm === 'WZ b' ? 'checked' : ''}/> WZ b
+          <label>
+            <input type="radio" name="Schwarmneigung" value="-" ${swNorm === '-' ? 'checked' : ''}/>
+            <span>None</span>
           </label>
-          <label class="pill" style="cursor:pointer;">
-            <input type="radio" name="Schwarmneigung" value="WZ o" ${swNorm === 'WZ o' ? 'checked' : ''}/> WZ o
+          <label>
+            <input type="radio" name="Schwarmneigung" value="WZ b" ${swNorm === 'WZ b' ? 'checked' : ''}/>
+            <span>WZ b</span>
           </label>
-          <label class="pill" style="cursor:pointer;">
-            <input type="radio" name="Schwarmneigung" value="WZ g" ${swNorm === 'WZ g' ? 'checked' : ''}/> WZ g
+          <label>
+            <input type="radio" name="Schwarmneigung" value="WZ o" ${swNorm === 'WZ o' ? 'checked' : ''}/>
+            <span>WZ o</span>
           </label>
-          <label class="pill" style="cursor:pointer;">
-            <input type="radio" name="Schwarmneigung" value="Schw" ${swNorm === 'Schw' ? 'checked' : ''}/> Schw
+          <label>
+            <input type="radio" name="Schwarmneigung" value="WZ g" ${swNorm === 'WZ g' ? 'checked' : ''}/>
+            <span>WZ g</span>
+          </label>
+          <label>
+            <input type="radio" name="Schwarmneigung" value="Schw" ${swNorm === 'Schw' ? 'checked' : ''}/>
+            <span>Schw</span>
           </label>
         </div>
       </div>
