@@ -366,24 +366,61 @@ async function renderStandorte() {
 
 async function renderQueens() {
   setActiveTab('/queens');
-  app.innerHTML = card('Queens', null, `<div class="skeleton"></div>`);
-  const data = await apiGet({ action:'queens' });
+  const route = parseRoute();
+  const sortOptions = {
+    birth: 'Geburtsjahr + ID',
+    id: 'ID',
+    location: 'Standort + Hive_nr'
+  };
+  const requestedSort = route.query.get('sort') || 'birth';
+  const activeSort = Object.prototype.hasOwnProperty.call(sortOptions, requestedSort) ? requestedSort : 'birth';
+  const sortControls = Object.entries(sortOptions).map(([value, label]) => `
+    <label>
+      <input type="radio" name="queen-sort" value="${htmlesc(value)}" ${activeSort === value ? 'checked' : ''}/>
+      <span>${htmlesc(label)}</span>
+    </label>
+  `).join('');
+  const sortHeader = `
+    <div class="queen-table-title">
+      <div class="field queen-sort-field">
+        <div class="segmented-button segmented-button-neutral" role="group" aria-label="Queen sort order">
+          ${sortControls}
+        </div>
+      </div>
+    </div>
+    <div style="height:12px"></div>
+  `;
+
+  app.innerHTML = `
+    <section class="card">
+      ${sortHeader}
+      <div class="skeleton"></div>
+    </section>
+  `;
+  const data = await apiGet({ action:'queens', sort: activeSort });
   const canEdit = canWrite();
   const strong = v => (v ? `<strong>${htmlesc(v)}</strong>` : '');
   const joinParts = parts => parts.filter(p => p && String(p).length > 0).join(' · ');
+  const queenYearClass = year => {
+    const digit = Number.parseInt(String(year ?? '').slice(-1), 10);
+    if (!Number.isFinite(digit)) return '';
+    return `queen-year-${digit % 5}`;
+  };
   let addQueenBtn = '';
   if (canEdit) {
     setTopbarActions([
       { label: 'Add Queen', primary: true, onClick: () => { location.hash = '#/queen/new'; } }
     ]);
   } else if (authState.user) {
-    addQueenBtn = `<button type="button" class="btn" disabled>Read-only</button>`;
+    setTopbarActions([
+      { label: 'Read-only', disabled: true }
+    ]);
   } else {
     addQueenBtn = `<button type="button" class="btn" onclick="location.hash='#/login?next=${encodeURIComponent('#/queen/new')}'">Sign in to add</button>`;
   }
 
   const rows = data.queens.map(q => `
-    <tr role="button" tabindex="0" onclick="location.hash='#/queen/${encodeURIComponent(q.ID)}'">
+    <tr class="${queenYearClass(q.Geburtsjahr)}" role="button" tabindex="0" onclick="location.hash='#/queen/${encodeURIComponent(q.ID)}'">
       <td>
         <div class="vstack" style="gap:4px">
           <div class="qline">
@@ -391,6 +428,7 @@ async function renderQueens() {
               strong(q.ID),
               htmlesc(q.Rasse || ''),
               htmlesc(q.gezeichnet || ''),
+              htmlesc(q.Lebensnummer || ''),
               htmlesc(q.Belegstelle || ''),
             ])}</div>
             <div class="qright">${strong(q.Hive_nr || '')}</div>
@@ -400,6 +438,7 @@ async function renderQueens() {
               htmlesc(q.Geburtsjahr || ''),
               htmlesc(q.Züchter || ''),
               htmlesc(q.LN_Mutter || ''),
+              htmlesc(q.LN_Vatermutter || ''),
             ])}</div>
             <div class="qright">${strong(q.Standort || '')}</div>
           </div>
@@ -408,15 +447,24 @@ async function renderQueens() {
     </tr>
   `).join('');
 
-  app.innerHTML = card('Queens', null, `
-    <div class="hstack">
-      ${addQueenBtn}
-    </div>
-    <table class="table queens-table">
-      <thead><tr><th>Queen</th></tr></thead>
-      <tbody>${rows || `<tr><td class="muted">No queens found</td></tr>`}</tbody>
-    </table>
-  `);
+  app.innerHTML = `
+    <section class="card">
+      ${sortHeader}
+      ${addQueenBtn ? `<div class="hstack">${addQueenBtn}</div>` : ''}
+      <table class="table queens-table">
+        <thead><tr><th>Queen</th></tr></thead>
+        <tbody>${rows || `<tr><td class="muted">No queens found</td></tr>`}</tbody>
+      </table>
+    </section>
+  `;
+
+  document.querySelectorAll('input[name="queen-sort"]').forEach(input => {
+    input.addEventListener('change', () => {
+      if (!input.checked) return;
+      const next = input.value === 'birth' ? '#/queens' : `#/queens?sort=${encodeURIComponent(input.value)}`;
+      location.hash = next;
+    });
+  });
 }
 
 async function renderQueenEdit(queenId) {

@@ -480,6 +480,12 @@ try {
   }
 
   if ($action === 'queens') {
+    $sort = $_GET['sort'] ?? 'birth';
+    $orderBy = [
+      'birth' => "aq.`Geburtsjahr` DESC, aq.`ID` DESC",
+      'id' => "aq.`ID` DESC",
+      'location' => "(vl.`Standort` IS NULL OR vl.`Standort` = '') ASC, vl.`Standort` ASC, vl.`Hive_nr` ASC",
+    ][$sort] ?? "aq.`Geburtsjahr` DESC, aq.`ID` DESC";
 
 $sql = "SELECT
     aq.`ID` AS `ID`,
@@ -512,7 +518,7 @@ LEFT JOIN (
     WHERE l.rn = 1 AND h.`inactive` = 0
 ) vl
   ON vl.`Queen_ID` = aq.`ID`
-ORDER BY aq.`Geburtsjahr` DESC, aq.`ID` DESC;";
+ORDER BY $orderBy;";
 
     $rows = $pdo->query($sql)->fetchAll();
     respond(['queens' => $rows]);
@@ -521,7 +527,7 @@ ORDER BY aq.`Geburtsjahr` DESC, aq.`ID` DESC;";
   if ($action === 'queen_options') {
     $sql = "SELECT ID, Lebensnummer, Geburtsjahr, gezeichnet, Rasse
             FROM Queens
-            ORDER BY Geburtsjahr DESC, ID DESC";
+            ORDER BY ID DESC";
     $rows = $pdo->query($sql)->fetchAll();
     respond(['queens' => $rows]);
   }

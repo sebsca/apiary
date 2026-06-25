@@ -300,9 +300,11 @@ a:hover{text-decoration:underline}
 .table tr{transition: background-color 0.15s ease}
 .table tr:hover td{background:var(--table-row-hover-bg)}
 .table tr:last-child td{border-bottom:none}
-.queens-table tbody tr:nth-child(even) td{
-  background:#f3f4f6;
-}
+.queens-table tbody tr.queen-year-0 td{background:#dbeafe}
+.queens-table tbody tr.queen-year-1 td{background:#fff}
+.queens-table tbody tr.queen-year-2 td{background:#fef3c7}
+.queens-table tbody tr.queen-year-3 td{background:#fee2e2}
+.queens-table tbody tr.queen-year-4 td{background:#dcfce7}
 .queens-table tbody tr:hover td{
   background:var(--table-row-hover-bg);
 }
@@ -498,6 +500,29 @@ fieldset.form:disabled{
 .segmented-button-fluid span{
   min-width:0;
   padding-inline:8px;
+}
+.queen-table-title{
+  display:block;
+  width:100%;
+}
+.queen-sort-field{
+  width:100%;
+  min-width:0;
+  margin:0;
+}
+.queen-sort-field .segmented-button{
+  display:flex;
+  width:100%;
+}
+.queen-sort-field .segmented-button label{
+  flex:1 1 0;
+}
+.queen-sort-field .segmented-button span{
+  min-width:0;
+  height:100%;
+  padding-inline:10px;
+  white-space:normal;
+  overflow-wrap:anywhere;
 }
 .segmented-button input:focus-visible + span{
   outline:2px solid var(--accent);
