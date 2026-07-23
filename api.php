@@ -479,6 +479,174 @@ try {
     respond(['standorte' => $rows]);
   }
 
+  if ($action === 'hives') {
+    $sql = latest_visits_cte() . "
+      SELECT h.ID AS Hive_ID,
+             h.Hive_nr,
+             l.Standort,
+             l.Datum AS last_visit_date,
+             q.ID AS queen_id,
+             q.Rasse AS queen_breed,
+             q.Geburtsjahr AS queen_birth_year
+      FROM Hives h
+      LEFT JOIN latest l ON l.Hive_ID = h.ID AND l.rn = 1
+      LEFT JOIN Queens q ON q.ID = l.Queen_ID
+      WHERE h.inactive = 0
+      ORDER BY h.Hive_nr ASC, h.ID ASC
+    ";
+    $rows = $pdo->query($sql)->fetchAll();
+    respond(['hives' => $rows]);
+  }
+
+  if ($action === 'hive_movements') {
+    $fromDate = (new DateTimeImmutable('first day of January'))->format('Y-m-d');
+    $sql = "SELECT
+              v.`Hive_ID`,
+              COALESCE(h.`Hive_nr`, v.`Hive_ID`) AS Hive_nr,
+              h.`inactive`,
+              v.`Datum`,
+              NULLIF(TRIM(v.`Standort`), '') AS Standort
+            FROM Visits v
+            JOIN Hives h ON h.`ID` = v.`Hive_ID`
+            WHERE v.`Standort` IS NOT NULL
+              AND TRIM(v.`Standort`) <> ''
+              AND (
+                v.`Datum` >= :from_date
+                OR v.`ID` = (
+                  SELECT v2.`ID`
+                  FROM Visits v2
+                  WHERE v2.`Hive_ID` = v.`Hive_ID`
+                    AND v2.`Standort` IS NOT NULL
+                    AND TRIM(v2.`Standort`) <> ''
+                    AND v2.`Datum` < :from_date_before
+                  ORDER BY v2.`Datum` DESC, v2.`ID` DESC
+                  LIMIT 1
+                )
+              )
+            ORDER BY v.`Hive_ID` ASC, v.`Datum` ASC, v.`ID` ASC";
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute(['from_date' => $fromDate, 'from_date_before' => $fromDate]);
+    $rows = $stmt->fetchAll();
+    $nodeMap = [];
+    $nodes = [];
+    $linkMap = [];
+    $hives = [];
+    $movementDates = [];
+
+    foreach ($rows as $row) {
+      $hiveId = (int)$row['Hive_ID'];
+      $date = (string)$row['Datum'];
+      if (!isset($hives[$hiveId])) {
+        $hives[$hiveId] = ['nr' => (string)$row['Hive_nr'], 'inactive' => (int)$row['inactive'], 'days' => []];
+      }
+      $hives[$hiveId]['days'][$date] = (string)$row['Standort'];
+    }
+
+    $movements = [];
+    $currentPositions = [];
+    foreach ($hives as $hive) {
+      $lastStandort = null;
+      $lastMovementDate = null;
+      foreach ($hive['days'] as $date => $standort) {
+        if ($lastStandort === null) {
+          $lastStandort = $standort;
+          continue;
+        }
+        if ($standort === $lastStandort) {
+          continue;
+        }
+        if ($date < $fromDate) {
+          $lastStandort = $standort;
+          $lastMovementDate = null;
+          continue;
+        }
+        $movements[] = [
+          'hive' => $hive['nr'],
+          'source_name' => $lastStandort,
+          'target_name' => $standort,
+          'date' => $date,
+          'source_date' => $lastMovementDate
+        ];
+        $movementDates[$date] = true;
+        $lastStandort = $standort;
+        $lastMovementDate = $date;
+      }
+      if ($lastStandort !== null && $hive['inactive'] === 0) {
+        $currentPositions[] = [
+          'hive' => $hive['nr'],
+          'source_name' => $lastStandort,
+          'target_name' => $lastStandort,
+          'source_date' => $lastMovementDate
+        ];
+      }
+    }
+
+    $dates = array_keys($movementDates);
+    sort($dates);
+    $currentDate = count($dates) > 0 ? $dates[count($dates) - 1] : null;
+    $columns = ['Start'];
+    $dateColumns = [];
+    foreach ($dates as $date) {
+      $dateColumns[$date] = count($columns);
+      $columns[] = $date;
+    }
+
+    if ($currentDate !== null) {
+      foreach ($currentPositions as &$position) {
+        $position['date'] = $currentDate;
+      }
+      unset($position);
+    } else {
+      $currentPositions = [];
+    }
+
+    foreach (array_merge($movements, $currentPositions) as $movement) {
+      $sourceColumn = $movement['source_date'] ? ($dateColumns[$movement['source_date']] ?? 0) : 0;
+      $targetColumn = $dateColumns[$movement['date']];
+      if ($targetColumn <= $sourceColumn) {
+        continue;
+      }
+
+      $sourceKey = $sourceColumn . '|' . $movement['source_name'];
+      $targetKey = $targetColumn . '|' . $movement['target_name'];
+      foreach ([[$sourceKey, $sourceColumn, $movement['source_name']], [$targetKey, $targetColumn, $movement['target_name']]] as $node) {
+        [$key, $column, $name] = $node;
+        if (!isset($nodeMap[$key])) {
+          $nodeMap[$key] = count($nodes);
+          $nodes[] = ['name' => $name, 'column' => $column, 'date' => $columns[$column]];
+        }
+      }
+
+      $linkKey = $sourceKey . '>' . $targetKey;
+      if (!isset($linkMap[$linkKey])) {
+        $linkMap[$linkKey] = [
+          'source' => $nodeMap[$sourceKey],
+          'target' => $nodeMap[$targetKey],
+          'value' => 0,
+          'date' => $movement['date'],
+          'hives' => []
+        ];
+      }
+      $linkMap[$linkKey]['value']++;
+      $linkMap[$linkKey]['hives'][$movement['hive']] = true;
+    }
+
+    $links = [];
+    foreach ($linkMap as $link) {
+      $hives = array_keys($link['hives']);
+      sort($hives, SORT_NATURAL);
+      $links[] = [
+        'source' => $link['source'],
+        'target' => $link['target'],
+        'value' => $link['value'],
+        'date' => $link['date'],
+        'hives' => implode(', ', $hives)
+      ];
+    }
+
+    respond(['nodes' => $nodes, 'links' => $links, 'columns' => $columns]);
+  }
+
   if ($action === 'queens') {
     $sort = $_GET['sort'] ?? 'birth';
     $orderBy = [

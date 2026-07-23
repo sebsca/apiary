@@ -57,6 +57,8 @@ const handleApiResponse = async (res, opts = {}) => {
 
 const app = document.getElementById('app');
 const tabStandorte = document.getElementById('tab-standorte');
+const tabHives = document.getElementById('tab-hives');
+const tabMovements = document.getElementById('tab-movements');
 const tabQueens = document.getElementById('tab-queens');
 const authStatus = document.getElementById('auth-status');
 const authAdmin = document.getElementById('auth-admin');
@@ -256,7 +258,9 @@ async function initAuth() {
 }
 
 function setActiveTab(path) {
-  tabStandorte.classList.toggle('active', path === '/' || path.startsWith('/standort') || path.startsWith('/hive') || path.startsWith('/visit'));
+  tabStandorte.classList.toggle('active', path === '/' || path.startsWith('/standort') || path.startsWith('/visit'));
+  tabHives.classList.toggle('active', path.startsWith('/hive'));
+  tabMovements.classList.toggle('active', path.startsWith('/movements'));
   tabQueens.classList.toggle('active', path.startsWith('/queens') || path.startsWith('/queen'));
 }
 
@@ -362,6 +366,143 @@ async function renderStandorte() {
       <tbody>${rows || `<tr><td colspan="3" class="muted">No data</td></tr>`}</tbody>
     </table>
   `);
+}
+
+async function renderHives() {
+  setActiveTab('/hives');
+  app.innerHTML = card('Hives', null, `<div class="skeleton"></div>`);
+  const data = await apiGet({ action:'hives' });
+
+  const rows = (data.hives || []).map(hive => {
+    const queen = hive.queen_id
+      ? `${htmlesc(hive.queen_id)} · ${htmlesc(hive.queen_breed || '—')} · ${htmlesc(hive.queen_birth_year || '—')}`
+      : '—';
+    return `
+      <tr role="button" tabindex="0" onclick="location.hash='#/hive/${encodeURIComponent(hive.Hive_ID)}'">
+        <td>${htmlesc(hive.Hive_nr || '—')}</td>
+        <td>${htmlesc(hive.Standort || '—')}</td>
+        <td>${htmlesc(fmtDate(hive.last_visit_date))}</td>
+        <td>${queen}</td>
+      </tr>
+    `;
+  }).join('');
+
+  app.innerHTML = card('Hives', null, `
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Hive_Nr</th>
+          <th>Location</th>
+          <th>Last visit</th>
+          <th>Queen (ID · Breed · Birth year)</th>
+        </tr>
+      </thead>
+      <tbody>${rows || `<tr><td colspan="4" class="muted">No active hives found.</td></tr>`}</tbody>
+    </table>
+  `);
+}
+
+async function renderHiveMovements() {
+  setActiveTab('/movements');
+  app.innerHTML = card('Hive Movements', null, `<div class="skeleton"></div>`);
+  const data = await apiGet({ action:'hive_movements' });
+
+  if (!window.d3 || !d3.sankey || !d3.sankeyLinkHorizontal) {
+    app.innerHTML = card('Hive Movements', null, `<div class="notice">Sankey library unavailable.</div>`);
+    return;
+  }
+
+  if (!data.links || data.links.length === 0) {
+    app.innerHTML = card('Hive Movements', null, `<div class="notice">No hive movements found.</div>`);
+    return;
+  }
+
+  app.innerHTML = card('Hive Movements', null, `<div id="sankey-chart" class="sankey-chart"></div>`);
+
+  const width = 960;
+  const height = Math.max(420, (data.nodes || []).length * 44, data.links.length * 28);
+  const columnLabels = data.columns || [];
+  const baseNodeCount = (data.nodes || []).length;
+  const dummyNodes = columnLabels.map((_, column) => ({ name: '', column, date: columnLabels[column], dummy: true }));
+  const dummyLinks = columnLabels.slice(1).map((_, i) => ({
+    source: baseNodeCount + i,
+    target: baseNodeCount + i + 1,
+    value: 0.000001,
+    dummy: true
+  }));
+  const graph = {
+    nodes: [...(data.nodes || []).map(d => ({ ...d })), ...dummyNodes],
+    links: [...data.links.map(d => ({ ...d })), ...dummyLinks]
+  };
+  const color = d3.scaleOrdinal(d3.schemeTableau10);
+
+  d3.sankey()
+    .nodeWidth(18)
+    .nodePadding(16)
+    .nodeAlign(d => d.column)
+    .nodeSort((a, b) => {
+      if (a.dummy || b.dummy) return Number(!!a.dummy) - Number(!!b.dummy);
+      return String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' });
+    })
+    .extent([[1, 48], [width - 1, height - 8]])(graph);
+
+  const svg = d3.select('#sankey-chart')
+    .append('svg')
+    .attr('viewBox', `0 0 ${width} ${height}`)
+    .attr('role', 'img')
+    .attr('aria-label', 'Hive movements between locations');
+
+  svg.append('g')
+    .attr('fill', 'none')
+    .selectAll('path')
+    .data(graph.links.filter(d => !d.dummy))
+    .join('path')
+    .attr('d', d3.sankeyLinkHorizontal())
+    .attr('stroke', d => color(d.source.name))
+    .attr('stroke-width', d => Math.max(1, d.width))
+    .attr('stroke-opacity', 0.34)
+    .append('title')
+    .text(d => `${d.date}: ${d.source.name} → ${d.target.name}: ${d.value}${d.hives ? `\n${d.hives}` : ''}`);
+
+  const node = svg.append('g')
+    .selectAll('g')
+    .data(graph.nodes.filter(d => !d.dummy))
+    .join('g');
+
+  node.append('rect')
+    .attr('x', d => d.x0)
+    .attr('y', d => d.y0)
+    .attr('height', d => Math.max(1, d.y1 - d.y0))
+    .attr('width', d => d.x1 - d.x0)
+    .attr('fill', d => color(d.name))
+    .attr('rx', 3)
+    .append('title')
+    .text(d => `${d.date}: ${d.name}: ${d.value}`);
+
+  node.append('text')
+    .attr('x', d => d.x0 < width / 2 ? d.x1 + 8 : d.x0 - 8)
+    .attr('y', d => (d.y0 + d.y1) / 2)
+    .attr('dy', '0.35em')
+    .attr('text-anchor', d => d.x0 < width / 2 ? 'start' : 'end')
+    .text(d => d.name);
+
+  const columnXs = columnLabels.map((_, column) => {
+    const columnNodes = graph.nodes.filter(d => d.column === column);
+    if (columnNodes.length > 0) {
+      return d3.mean(columnNodes, d => (d.x0 + d.x1) / 2);
+    }
+    return columnLabels.length <= 1 ? width / 2 : column * (width - 20) / (columnLabels.length - 1) + 10;
+  });
+
+  svg.append('g')
+    .attr('class', 'sankey-axis')
+    .selectAll('text')
+    .data(columnLabels)
+    .join('text')
+    .attr('x', (_, i) => columnXs[i])
+    .attr('y', 22)
+    .attr('text-anchor', 'middle')
+    .text(d => d);
 }
 
 async function renderQueens() {
@@ -1546,6 +1687,8 @@ async function router() {
   }
 
   if (path === '/' || path === '//') return renderStandorte();
+  if (path === '/hives') return renderHives();
+  if (path === '/movements') return renderHiveMovements();
   if (path === '/queens') return renderQueens();
   if (path === '/login') return renderLogin(r);
   if (path === '/account') return renderAccount();
