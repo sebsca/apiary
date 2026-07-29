@@ -1,6 +1,12 @@
 <?php
 // api.php - JSON API for Apiary database
 // Requires PHP 7.4+ and MySQL 8+ (for window functions).
+require_once __DIR__ . '/api-bootstrap.php';
+require_once __DIR__ . '/api-routes.php';
+require_once __DIR__ . '/movements.php';
+
+const USER_ROLES = ['admin', 'contributor', 'readonly'];
+const DEFAULT_RESET_PASSWORD = '12345678';
 $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (!empty($_SERVER['SERVER_PORT']) && (int)$_SERVER['SERVER_PORT'] === 443);
 ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
@@ -8,9 +14,6 @@ if ($https) {
   ini_set('session.cookie_secure', '1');
 }
 session_start();
-
-// Security: Content Security Policy
-header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'");
 
 header('Content-Type: application/json; charset=utf-8');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
@@ -20,56 +23,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
   http_response_code(204);
   exit;
 }
-
-function load_env_file(string $path): void {
-  if (!is_readable($path)) {
-    return;
-  }
-  $lines = file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-  if ($lines === false) {
-    return;
-  }
-  foreach ($lines as $line) {
-    $line = trim($line);
-    if ($line === '' || $line[0] === '#') {
-      continue;
-    }
-    if (strncmp($line, 'export ', 7) === 0) {
-      $line = trim(substr($line, 7));
-    }
-    $pos = strpos($line, '=');
-    if ($pos === false) {
-      continue;
-    }
-    $key = trim(substr($line, 0, $pos));
-    if ($key === '') {
-      continue;
-    }
-    if (getenv($key) !== false) {
-      continue;
-    }
-    $value = trim(substr($line, $pos + 1));
-    $len = strlen($value);
-    if ($len >= 2) {
-      $first = $value[0];
-      $last = $value[$len - 1];
-      if (($first === '"' && $last === '"') || ($first === "'" && $last === "'")) {
-        $value = substr($value, 1, -1);
-        if ($first === '"') {
-          $value = str_replace(
-            ['\\n', '\\r', '\\t', '\\"', '\\\\'],
-            ["\n", "\r", "\t", '"', '\\'],
-            $value
-          );
-        }
-      }
-    }
-    putenv("{$key}={$value}");
-    $_ENV[$key] = $value;
-  }
-}
-
-load_env_file(__DIR__ . '/.env');
 
 function respond($data, int $status=200) {
   http_response_code($status);
@@ -149,27 +102,58 @@ function require_csrf(): void {
   }
 }
 
-function get_pdo(): PDO {
-  // TODO: set these for your server
-  $db_host = getenv('APIARY_DB_HOST') ?: 'localhost';
-  $db_name = getenv('APIARY_DB_NAME') ?: 'Apiary';
-  $db_user = getenv('APIARY_DB_USER') ?: '';
-  $db_pass = getenv('APIARY_DB_PASS') ?: '';
-
-  $dsn = "mysql:host={$db_host};dbname={$db_name};charset=utf8mb4";
-  $pdo = new PDO($dsn, $db_user, $db_pass, [
-    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-  ]);
-  return $pdo;
-}
-
 function require_param(string $key): string {
   $v = $_GET[$key] ?? $_POST[$key] ?? null;
   if ($v === null || $v === '') {
     respond(['error' => "Missing parameter: {$key}"], 400);
   }
   return (string)$v;
+}
+
+function request_payload(): array {
+  $payload = json_decode(file_get_contents('php://input'), true);
+  return is_array($payload) ? $payload : $_POST;
+}
+
+function payload_value(array $payload, string $key, $default=null) {
+  if (!array_key_exists($key, $payload)) {
+    return $default;
+  }
+  return $payload[$key] === '' ? null : $payload[$key];
+}
+
+function visit_params(array $payload): array {
+  return [
+    'Queen_ID' => payload_value($payload, 'Queen_ID'),
+    'Datum' => payload_value($payload, 'Datum', date('Y-m-d')),
+    'Standort' => payload_value($payload, 'Standort'),
+    'Aufbau' => payload_value($payload, 'Aufbau'),
+    'Volksstaerke' => payload_value($payload, 'Volksstaerke'),
+    'Koenigin_status' => payload_value($payload, 'Koenigin_status'),
+    'Brut_Stifte' => payload_value($payload, 'Brut_Stifte'),
+    'Brut_offen' => payload_value($payload, 'Brut_offen'),
+    'Brut_verdeckelt' => payload_value($payload, 'Brut_verdeckelt'),
+    'Sanftmut' => payload_value($payload, 'Sanftmut'),
+    'Wabensitz' => payload_value($payload, 'Wabensitz'),
+    'Schwarmneigung' => payload_value($payload, 'Schwarmneigung'),
+    'Honig' => payload_value($payload, 'Honig'),
+    'Futter' => payload_value($payload, 'Futter'),
+    'Bemerkungen' => payload_value($payload, 'Bemerkungen'),
+    'ToDo' => payload_value($payload, 'ToDo')
+  ];
+}
+
+function queen_params(array $payload): array {
+  return [
+    'Lebensnummer' => payload_value($payload, 'Lebensnummer'),
+    'Geburtsjahr' => payload_value($payload, 'Geburtsjahr'),
+    'gezeichnet' => payload_value($payload, 'gezeichnet'),
+    'Rasse' => payload_value($payload, 'Rasse'),
+    'Zuechter' => payload_value($payload, 'Zuechter', payload_value($payload, 'Züchter')),
+    'LN_Mutter' => payload_value($payload, 'LN_Mutter'),
+    'LN_Vatermutter' => payload_value($payload, 'LN_Vatermutter'),
+    'Belegstelle' => payload_value($payload, 'Belegstelle')
+  ];
 }
 
 function latest_visits_cte(): string {
@@ -182,47 +166,31 @@ function latest_visits_cte(): string {
 }
 
 $action = $_GET['action'] ?? $_POST['action'] ?? '';
-$public_actions = [
-  'login',
-  'logout',
-  'me',
-  'admin_bootstrap_status',
-  'admin_bootstrap_create'
-];
-$write_actions = [
-  'visit_create',
-  'visit_update',
-  'hive_create',
-  'hive_update',
-  'visit_delete',
-  'queen_delete',
-  'queen_create',
-  'queen_update'
-];
-$admin_actions = [
-  'users_list',
-  'user_create',
-  'user_delete',
-  'user_update_role',
-  'user_reset_password'
-];
+$routes = api_routes();
+$route = $routes[$action] ?? null;
 
 try {
-  $pdo = get_pdo();
-
-  if (!in_array($action, $public_actions, true)) {
-    require_auth();
+  if ($route === null) {
+    respond(['error' => 'Unknown action'], 404);
+  }
+  if ($_SERVER['REQUEST_METHOD'] !== $route['method']) {
+    header('Allow: ' . $route['method']);
+    respond(['error' => 'Method not allowed'], 405);
   }
 
-  if (in_array($action, $admin_actions, true)) {
-    require_role(['admin']);
-  } elseif (in_array($action, $write_actions, true)) {
-    require_role(['admin', 'contributor']);
+  $pdo = get_pdo();
+
+  if ($route['roles'] !== null) {
+    require_auth();
+  }
+  if (is_array($route['roles']) && count($route['roles']) > 0) {
+    require_role($route['roles']);
   }
 
   if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action !== 'login') {
     require_csrf();
   }
+  $payload = $_SERVER['REQUEST_METHOD'] === 'POST' ? request_payload() : [];
 
   if ($action === 'me') {
     $user = null;
@@ -242,10 +210,7 @@ try {
     respond(['exists' => $exists]);
   }
 
-  if ($action === 'admin_bootstrap_create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
-    $payload = json_decode(file_get_contents('php://input'), true);
-    if (!is_array($payload)) $payload = $_POST;
-
+  if ($action === 'admin_bootstrap_create') {
     $confirm = (bool)($payload['confirm'] ?? false);
     if (!$confirm) {
       respond(['error' => 'Confirmation required'], 400);
@@ -276,10 +241,7 @@ try {
     respond(['ok' => true, 'id' => $new_id]);
   }
 
-  if ($action === 'login' && $_SERVER['REQUEST_METHOD'] === 'POST') {
-    $payload = json_decode(file_get_contents('php://input'), true);
-    if (!is_array($payload)) $payload = $_POST;
-
+  if ($action === 'login') {
     $username = trim((string)($payload['username'] ?? ''));
     $password = (string)($payload['password'] ?? '');
 
@@ -323,9 +285,6 @@ try {
   }
 
   if ($action === 'logout') {
-    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-      respond(['error' => 'Method not allowed'], 405);
-    }
     $_SESSION = [];
     if (ini_get('session.use_cookies')) {
       $params = session_get_cookie_params();
@@ -335,10 +294,7 @@ try {
     respond(['ok' => true]);
   }
 
-  if ($action === 'change_password' && $_SERVER['REQUEST_METHOD'] === 'POST') {
-    $payload = json_decode(file_get_contents('php://input'), true);
-    if (!is_array($payload)) $payload = $_POST;
-
+  if ($action === 'change_password') {
     $current = (string)($payload['current_password'] ?? '');
     $next = (string)($payload['new_password'] ?? '');
 
@@ -371,22 +327,17 @@ try {
     respond(['users' => $rows]);
   }
 
-  if ($action === 'user_create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
-    $payload = json_decode(file_get_contents('php://input'), true);
-    if (!is_array($payload)) $payload = $_POST;
-
+  if ($action === 'user_create') {
     $username = trim((string)($payload['username'] ?? ''));
     $password = (string)($payload['password'] ?? '');
     $role = (string)($payload['role'] ?? 'contributor');
-    $allowed_roles = ['admin', 'contributor', 'readonly'];
-
     if ($username === '' || $password === '') {
       respond(['error' => 'Username and password required'], 400);
     }
     if (strlen($password) < 7) {
       respond(['error' => 'Password must be at least 7 characters'], 400);
     }
-    if (!in_array($role, $allowed_roles, true)) {
+    if (!in_array($role, USER_ROLES, true)) {
       respond(['error' => 'Invalid role'], 400);
     }
 
@@ -407,10 +358,7 @@ try {
     respond(['ok' => true, 'id' => $new_id], 201);
   }
 
-  if ($action === 'user_delete' && $_SERVER['REQUEST_METHOD'] === 'POST') {
-    $payload = json_decode(file_get_contents('php://input'), true);
-    if (!is_array($payload)) $payload = $_POST;
-
+  if ($action === 'user_delete') {
     $id = (int)($payload['id'] ?? 0);
     if ($id <= 0) {
       respond(['error' => 'Valid id required'], 400);
@@ -424,18 +372,13 @@ try {
     respond(['ok' => true]);
   }
 
-  if ($action === 'user_update_role' && $_SERVER['REQUEST_METHOD'] === 'POST') {
-    $payload = json_decode(file_get_contents('php://input'), true);
-    if (!is_array($payload)) $payload = $_POST;
-
+  if ($action === 'user_update_role') {
     $id = (int)($payload['id'] ?? 0);
     $role = (string)($payload['role'] ?? '');
-    $allowed_roles = ['admin', 'contributor', 'readonly'];
-
     if ($id <= 0) {
       respond(['error' => 'Valid id required'], 400);
     }
-    if (!in_array($role, $allowed_roles, true)) {
+    if (!in_array($role, USER_ROLES, true)) {
       respond(['error' => 'Invalid role'], 400);
     }
     if ((int)($_SESSION['user_id'] ?? 0) === $id) {
@@ -448,20 +391,17 @@ try {
     respond(['ok' => true]);
   }
 
-  if ($action === 'user_reset_password' && $_SERVER['REQUEST_METHOD'] === 'POST') {
-    $payload = json_decode(file_get_contents('php://input'), true);
-    if (!is_array($payload)) $payload = $_POST;
-
+  if ($action === 'user_reset_password') {
     $id = (int)($payload['id'] ?? 0);
     if ($id <= 0) {
       respond(['error' => 'Valid id required'], 400);
     }
 
-    $hash = password_hash('12345678', PASSWORD_DEFAULT);
+    $hash = password_hash(DEFAULT_RESET_PASSWORD, PASSWORD_DEFAULT);
     $stmt = $pdo->prepare("UPDATE Users SET password_hash = :hash WHERE id = :id");
     $stmt->execute(['hash' => $hash, 'id' => $id]);
 
-    respond(['ok' => true]);
+    respond(['ok' => true, 'temporary_password' => DEFAULT_RESET_PASSWORD]);
   }
 
   if ($action === 'standorte') {
@@ -500,193 +440,38 @@ try {
 
   if ($action === 'hive_movements') {
     $fromDate = (new DateTimeImmutable('first day of January'))->format('Y-m-d');
-    $sql = "SELECT
-              v.`Hive_ID`,
-              COALESCE(h.`Hive_nr`, v.`Hive_ID`) AS Hive_nr,
-              h.`inactive`,
-              v.`Datum`,
-              NULLIF(TRIM(v.`Standort`), '') AS Standort
-            FROM Visits v
-            JOIN Hives h ON h.`ID` = v.`Hive_ID`
-            WHERE v.`Standort` IS NOT NULL
-              AND TRIM(v.`Standort`) <> ''
-              AND (
-                v.`Datum` >= :from_date
-                OR v.`ID` = (
-                  SELECT v2.`ID`
-                  FROM Visits v2
-                  WHERE v2.`Hive_ID` = v.`Hive_ID`
-                    AND v2.`Standort` IS NOT NULL
-                    AND TRIM(v2.`Standort`) <> ''
-                    AND v2.`Datum` < :from_date_before
-                  ORDER BY v2.`Datum` DESC, v2.`ID` DESC
-                  LIMIT 1
-                )
-              )
-            ORDER BY v.`Hive_ID` ASC, v.`Datum` ASC, v.`ID` ASC";
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute(['from_date' => $fromDate, 'from_date_before' => $fromDate]);
-    $rows = $stmt->fetchAll();
-    $nodeMap = [];
-    $nodes = [];
-    $linkMap = [];
-    $hives = [];
-    $movementDates = [];
-
-    foreach ($rows as $row) {
-      $hiveId = (int)$row['Hive_ID'];
-      $date = (string)$row['Datum'];
-      if (!isset($hives[$hiveId])) {
-        $hives[$hiveId] = ['nr' => (string)$row['Hive_nr'], 'inactive' => (int)$row['inactive'], 'days' => []];
-      }
-      $hives[$hiveId]['days'][$date] = (string)$row['Standort'];
-    }
-
-    $movements = [];
-    $currentPositions = [];
-    foreach ($hives as $hive) {
-      $lastStandort = null;
-      $lastMovementDate = null;
-      foreach ($hive['days'] as $date => $standort) {
-        if ($lastStandort === null) {
-          $lastStandort = $standort;
-          continue;
-        }
-        if ($standort === $lastStandort) {
-          continue;
-        }
-        if ($date < $fromDate) {
-          $lastStandort = $standort;
-          $lastMovementDate = null;
-          continue;
-        }
-        $movements[] = [
-          'hive' => $hive['nr'],
-          'source_name' => $lastStandort,
-          'target_name' => $standort,
-          'date' => $date,
-          'source_date' => $lastMovementDate
-        ];
-        $movementDates[$date] = true;
-        $lastStandort = $standort;
-        $lastMovementDate = $date;
-      }
-      if ($lastStandort !== null && $hive['inactive'] === 0) {
-        $currentPositions[] = [
-          'hive' => $hive['nr'],
-          'source_name' => $lastStandort,
-          'target_name' => $lastStandort,
-          'source_date' => $lastMovementDate
-        ];
-      }
-    }
-
-    $dates = array_keys($movementDates);
-    sort($dates);
-    $currentDate = count($dates) > 0 ? $dates[count($dates) - 1] : null;
-    $columns = ['Start'];
-    $dateColumns = [];
-    foreach ($dates as $date) {
-      $dateColumns[$date] = count($columns);
-      $columns[] = $date;
-    }
-
-    if ($currentDate !== null) {
-      foreach ($currentPositions as &$position) {
-        $position['date'] = $currentDate;
-      }
-      unset($position);
-    } else {
-      $currentPositions = [];
-    }
-
-    foreach (array_merge($movements, $currentPositions) as $movement) {
-      $sourceColumn = $movement['source_date'] ? ($dateColumns[$movement['source_date']] ?? 0) : 0;
-      $targetColumn = $dateColumns[$movement['date']];
-      if ($targetColumn <= $sourceColumn) {
-        continue;
-      }
-
-      $sourceKey = $sourceColumn . '|' . $movement['source_name'];
-      $targetKey = $targetColumn . '|' . $movement['target_name'];
-      foreach ([[$sourceKey, $sourceColumn, $movement['source_name']], [$targetKey, $targetColumn, $movement['target_name']]] as $node) {
-        [$key, $column, $name] = $node;
-        if (!isset($nodeMap[$key])) {
-          $nodeMap[$key] = count($nodes);
-          $nodes[] = ['name' => $name, 'column' => $column, 'date' => $columns[$column]];
-        }
-      }
-
-      $linkKey = $sourceKey . '>' . $targetKey;
-      if (!isset($linkMap[$linkKey])) {
-        $linkMap[$linkKey] = [
-          'source' => $nodeMap[$sourceKey],
-          'target' => $nodeMap[$targetKey],
-          'value' => 0,
-          'date' => $movement['date'],
-          'hives' => []
-        ];
-      }
-      $linkMap[$linkKey]['value']++;
-      $linkMap[$linkKey]['hives'][$movement['hive']] = true;
-    }
-
-    $links = [];
-    foreach ($linkMap as $link) {
-      $hives = array_keys($link['hives']);
-      sort($hives, SORT_NATURAL);
-      $links[] = [
-        'source' => $link['source'],
-        'target' => $link['target'],
-        'value' => $link['value'],
-        'date' => $link['date'],
-        'hives' => implode(', ', $hives)
-      ];
-    }
-
-    respond(['nodes' => $nodes, 'links' => $links, 'columns' => $columns]);
+    respond(build_sankey_graph(load_movement_rows($pdo, $fromDate), $fromDate));
   }
 
   if ($action === 'queens') {
     $sort = $_GET['sort'] ?? 'birth';
     $orderBy = [
-      'birth' => "aq.`Geburtsjahr` DESC, aq.`ID` DESC",
-      'id' => "aq.`ID` DESC",
-      'location' => "(vl.`Standort` IS NULL OR vl.`Standort` = '') ASC, vl.`Standort` ASC, vl.`Hive_nr` ASC",
-    ][$sort] ?? "aq.`Geburtsjahr` DESC, aq.`ID` DESC";
+      'birth' => "q.`Geburtsjahr` DESC, q.`ID` DESC",
+      'id' => "q.`ID` DESC",
+      'location' => "(aql.`Standort` IS NULL OR aql.`Standort` = '') ASC, aql.`Standort` ASC, aql.`Hive_nr` ASC",
+    ][$sort] ?? "q.`Geburtsjahr` DESC, q.`ID` DESC";
 
-$sql = "SELECT
-    aq.`ID` AS `ID`,
-    aq.`gezeichnet` AS `gezeichnet`,
-    aq.`Lebensnummer` AS `Lebensnummer`,
-    aq.`Geburtsjahr` AS `Geburtsjahr`,
-    aq.`Rasse` AS `Rasse`,
-    aq.`Züchter` AS `Züchter`,
-    aq.`LN_Mutter` AS `LN_Mutter`,
-    aq.`LN_Vatermutter` AS `LN_Vatermutter`,
-    aq.`Belegstelle` AS `Belegstelle`,
-    vl.`Hive_nr` AS `Hive_nr`,
-    vl.`Standort` AS `Standort`
-FROM Apiary.Queens aq
-LEFT JOIN (
-    SELECT
-        l.`Queen_ID`,
-        h.`Hive_nr`,
-        l.`Standort`
-    FROM (
-        SELECT
-            v.*,
-            ROW_NUMBER() OVER (
-                PARTITION BY v.`Hive_ID`
-                ORDER BY v.`Datum` DESC, v.`ID` DESC
-            ) AS rn
-        FROM Visits v
-    ) l
-    JOIN Hives h ON h.`ID` = l.`Hive_ID`
-    WHERE l.rn = 1 AND h.`inactive` = 0
-) vl
-  ON vl.`Queen_ID` = aq.`ID`
-ORDER BY $orderBy;";
+    $sql = latest_visits_cte() . ",
+      active_queen_locations AS (
+        SELECT l.Queen_ID, h.Hive_nr, l.Standort
+        FROM latest l
+        JOIN Hives h ON h.ID = l.Hive_ID
+        WHERE l.rn = 1 AND h.inactive = 0
+      )
+      SELECT q.ID,
+             q.gezeichnet,
+             q.Lebensnummer,
+             q.Geburtsjahr,
+             q.Rasse,
+             q.`Züchter` AS Zuechter,
+             q.LN_Mutter,
+             q.LN_Vatermutter,
+             q.Belegstelle,
+             aql.Hive_nr,
+             aql.Standort
+      FROM Queens q
+      LEFT JOIN active_queen_locations aql ON aql.Queen_ID = q.ID
+      ORDER BY $orderBy";
 
     $rows = $pdo->query($sql)->fetchAll();
     respond(['queens' => $rows]);
@@ -702,7 +487,7 @@ ORDER BY $orderBy;";
 
   if ($action === 'queen') {
     $id = (int)require_param('id');
-    $sql = "SELECT ID, Lebensnummer, Geburtsjahr, gezeichnet, Rasse, Züchter,
+    $sql = "SELECT ID, Lebensnummer, Geburtsjahr, gezeichnet, Rasse, `Züchter` AS Zuechter,
                    LN_Mutter, LN_Vatermutter, Belegstelle
             FROM Queens
             WHERE ID = :id";
@@ -800,23 +585,13 @@ ORDER BY $orderBy;";
     $stmt->execute(['id' => $id]);
     $row = $stmt->fetch();
     if (!$row) respond(['error' => 'Visit not found'], 404);
-
-    // add queen details if present
-    $queen = null;
-    if (!empty($row['Queen_ID'])) {
-      $q = $pdo->prepare("SELECT ID, Lebensnummer, Geburtsjahr, gezeichnet, Rasse, Züchter, LN_Mutter, LN_Vatermutter, Belegstelle
-                          FROM Queens WHERE ID = :id");
-      $q->execute(['id' => (int)$row['Queen_ID']]);
-      $queen = $q->fetch();
-    }
-
-    respond(['visit' => $row, 'queen' => $queen]);
+    respond(['visit' => $row]);
   }
 
   if ($action === 'visit_defaults') {
     $hive_id = (int)require_param('hive_id');
     // Last visit for hive (for prefill)
-    $sql = "SELECT v.*
+    $sql = "SELECT v.Queen_ID, v.Standort, v.Aufbau, v.ToDo
             FROM Visits v
             WHERE v.Hive_ID = :hive_id
             ORDER BY v.Datum DESC, v.ID DESC
@@ -831,26 +606,12 @@ ORDER BY $orderBy;";
       'Datum' => date('Y-m-d'),
       'Standort' => $last['Standort'] ?? null,
       'Aufbau' => $last['Aufbau'] ?? null,
-      'Volksstaerke' => $last['Volksstärke'] ?? null,
-      'Koenigin_status' => $last['Königin'] ?? null,
-      'Brut_Stifte' => $last['Brut_Stifte'] ?? null,
-      'Brut_offen' => $last['Brut_offen'] ?? null,
-      'Brut_verdeckelt' => $last['Brut_verdeckelt'] ?? null,
-      'Sanftmut' => $last['Sanftmut'] ?? null,
-      'Wabensitz' => $last['Wabensitz'] ?? null,
-      'Schwarmneigung' => $last['Schwarmneigung'] ?? null,
-      'Honig' => $last['Honig'] ?? null,
-      'Futter' => $last['Futter'] ?? null,
-      'Bemerkungen' => $last['Bemerkungen'] ?? null,
-      'ToDo' => $last['ToDo'] ?? null,
+      'ToDo' => $last['ToDo'] ?? null
     ];
-    respond(['defaults' => $defaults, 'has_last_visit' => (bool)$last]);
+    respond(['defaults' => $defaults]);
   }
 
-  if ($action === 'visit_create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
-    $payload = json_decode(file_get_contents('php://input'), true);
-    if (!is_array($payload)) $payload = $_POST;
-
+  if ($action === 'visit_create') {
     $hive_id = (int)($payload['Hive_ID'] ?? 0);
     if ($hive_id <= 0) respond(['error' => 'Hive_ID required'], 400);
 
@@ -865,33 +626,15 @@ ORDER BY $orderBy;";
                :Sanftmut, :Wabensitz, :Schwarmneigung,
                :Honig, :Futter, :Bemerkungen, :ToDo)";
     $stmt = $pdo->prepare($sql);
-    $stmt->execute([
-      'Hive_ID' => $hive_id,
-      'Queen_ID' => $payload['Queen_ID'] !== '' ? ($payload['Queen_ID'] ?? null) : null,
-      'Datum' => $payload['Datum'] ?? date('Y-m-d'),
-      'Standort' => $payload['Standort'] ?? null,
-      'Aufbau' => $payload['Aufbau'] ?? null,
-      'Volksstaerke' => $payload['Volksstaerke'] ?? null,
-      'Koenigin_status' => $payload['Koenigin_status'] ?? null,
-      'Brut_Stifte' => $payload['Brut_Stifte'] ?? null,
-      'Brut_offen' => $payload['Brut_offen'] ?? null,
-      'Brut_verdeckelt' => $payload['Brut_verdeckelt'] ?? null,
-      'Sanftmut' => $payload['Sanftmut'] ?? null,
-      'Wabensitz' => $payload['Wabensitz'] ?? null,
-      'Schwarmneigung' => $payload['Schwarmneigung'] ?? null,
-      'Honig' => $payload['Honig'] ?? null,
-      'Futter' => $payload['Futter'] ?? null,
-      'Bemerkungen' => $payload['Bemerkungen'] ?? null,
-      'ToDo' => $payload['ToDo'] ?? null,
-    ]);
+    $params = visit_params($payload);
+    $params['Hive_ID'] = $hive_id;
+    $stmt->execute($params);
     $new_id = (int)$pdo->lastInsertId();
     respond(['ok' => true, 'id' => $new_id], 201);
   }
 
-  if ($action === 'visit_update' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+  if ($action === 'visit_update') {
     $id = (int)require_param('id');
-    $payload = json_decode(file_get_contents('php://input'), true);
-    if (!is_array($payload)) $payload = $_POST;
 
     $sql = "UPDATE Visits SET
               Queen_ID = :Queen_ID,
@@ -912,79 +655,44 @@ ORDER BY $orderBy;";
               ToDo = :ToDo
             WHERE ID = :id";
     $stmt = $pdo->prepare($sql);
-    $stmt->execute([
-      'id' => $id,
-      'Queen_ID' => $payload['Queen_ID'] !== '' ? ($payload['Queen_ID'] ?? null) : null,
-      'Datum' => $payload['Datum'] ?? date('Y-m-d'),
-      'Standort' => $payload['Standort'] ?? null,
-      'Aufbau' => $payload['Aufbau'] ?? null,
-      'Volksstaerke' => $payload['Volksstaerke'] ?? null,
-      'Koenigin_status' => $payload['Koenigin_status'] ?? null,
-      'Brut_Stifte' => $payload['Brut_Stifte'] ?? null,
-      'Brut_offen' => $payload['Brut_offen'] ?? null,
-      'Brut_verdeckelt' => $payload['Brut_verdeckelt'] ?? null,
-      'Sanftmut' => $payload['Sanftmut'] ?? null,
-      'Wabensitz' => $payload['Wabensitz'] ?? null,
-      'Schwarmneigung' => $payload['Schwarmneigung'] ?? null,
-      'Honig' => $payload['Honig'] ?? null,
-      'Futter' => $payload['Futter'] ?? null,
-      'Bemerkungen' => $payload['Bemerkungen'] ?? null,
-      'ToDo' => $payload['ToDo'] ?? null,
-    ]);
+    $params = visit_params($payload);
+    $params['id'] = $id;
+    $stmt->execute($params);
     respond(['ok' => true]);
   }
 
-  if ($action === 'hive_create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
-    $payload = json_decode(file_get_contents('php://input'), true);
-    if (!is_array($payload)) $payload = $_POST;
-
+  if ($action === 'hive_create') {
     $inactive = isset($payload['inactive']) ? (int)$payload['inactive'] : 0;
+    $pdo->beginTransaction();
+    try {
+      $stmt = $pdo->prepare("INSERT INTO Hives (Hive_nr, inactive) VALUES (:Hive_nr, :inactive)");
+      $stmt->execute([
+        'Hive_nr' => payload_value($payload, 'Hive_nr'),
+        'inactive' => $inactive ? 1 : 0,
+      ]);
+      $new_id = (int)$pdo->lastInsertId();
 
-    $stmt = $pdo->prepare("INSERT INTO Hives (Hive_nr, inactive) VALUES (:Hive_nr, :inactive)");
-    $stmt->execute([
-      'Hive_nr' => $payload['Hive_nr'] ?? null,
-      'inactive' => $inactive ? 1 : 0,
-    ]);
-    $new_id = (int)$pdo->lastInsertId();
-
-    $today = date('Y-m-d');
-    $visit = $pdo->prepare("INSERT INTO Visits
-              (Hive_ID, Queen_ID, Datum, Standort, Aufbau, `Volksstärke`, `Königin`,
-               Brut_Stifte, Brut_offen, Brut_verdeckelt,
-               Sanftmut, Wabensitz, Schwarmneigung,
-               Honig, Futter, Bemerkungen, ToDo)
-            VALUES
-              (:Hive_ID, :Queen_ID, :Datum, :Standort, :Aufbau, :Volksstaerke, :Koenigin_status,
-               :Brut_Stifte, :Brut_offen, :Brut_verdeckelt,
-               :Sanftmut, :Wabensitz, :Schwarmneigung,
-               :Honig, :Futter, :Bemerkungen, :ToDo)");
-    $visit->execute([
-      'Hive_ID' => $new_id,
-      'Queen_ID' => null,
-      'Datum' => $today,
-      'Standort' => 'NEW',
-      'Aufbau' => null,
-      'Volksstaerke' => null,
-      'Koenigin_status' => null,
-      'Brut_Stifte' => null,
-      'Brut_offen' => null,
-      'Brut_verdeckelt' => null,
-      'Sanftmut' => null,
-      'Wabensitz' => null,
-      'Schwarmneigung' => null,
-      'Honig' => null,
-      'Futter' => null,
-      'Bemerkungen' => null,
-      'ToDo' => null,
-    ]);
+      // A newly created hive intentionally receives a synthetic first visit.
+      $visit = $pdo->prepare("INSERT INTO Visits
+                (Hive_ID, Queen_ID, Datum, Standort, Aufbau, `Volksstärke`, `Königin`,
+                 Brut_Stifte, Brut_offen, Brut_verdeckelt,
+                 Sanftmut, Wabensitz, Schwarmneigung,
+                 Honig, Futter, Bemerkungen, ToDo)
+              VALUES
+                (:Hive_ID, NULL, :Datum, 'NEW', NULL, NULL, NULL,
+                 NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)");
+      $visit->execute(['Hive_ID' => $new_id, 'Datum' => date('Y-m-d')]);
+      $pdo->commit();
+    } catch (Throwable $e) {
+      $pdo->rollBack();
+      throw $e;
+    }
 
     respond(['ok' => true, 'id' => $new_id], 201);
   }
 
-  if ($action === 'hive_update' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+  if ($action === 'hive_update') {
     $id = (int)require_param('id');
-    $payload = json_decode(file_get_contents('php://input'), true);
-    if (!is_array($payload)) $payload = $_POST;
 
     $inactive = isset($payload['inactive']) ? (int)$payload['inactive'] : 0;
 
@@ -1001,24 +709,21 @@ ORDER BY $orderBy;";
     respond(['ok' => true]);
   }
 
-  if ($action === 'visit_delete' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+  if ($action === 'visit_delete') {
     $id = (int)require_param('id');
     $stmt = $pdo->prepare("DELETE FROM Visits WHERE ID = :id");
     $stmt->execute(['id' => $id]);
     respond(['ok' => true]);
   }
 
-  if ($action === 'queen_delete' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+  if ($action === 'queen_delete') {
     $id = (int)require_param('id');
     $stmt = $pdo->prepare("DELETE FROM Queens WHERE ID = :id");
     $stmt->execute(['id' => $id]);
     respond(['ok' => true]);
   }
 
-  if ($action === 'queen_create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
-    $payload = json_decode(file_get_contents('php://input'), true);
-    if (!is_array($payload)) $payload = $_POST;
-
+  if ($action === 'queen_create') {
     $sql = "INSERT INTO Queens
               (Lebensnummer, Geburtsjahr, gezeichnet, Rasse, `Züchter`,
                LN_Mutter, LN_Vatermutter, Belegstelle)
@@ -1026,24 +731,13 @@ ORDER BY $orderBy;";
               (:Lebensnummer, :Geburtsjahr, :gezeichnet, :Rasse, :Zuechter,
                :LN_Mutter, :LN_Vatermutter, :Belegstelle)";
     $stmt = $pdo->prepare($sql);
-    $stmt->execute([
-      'Lebensnummer' => $payload['Lebensnummer'] ?? null,
-      'Geburtsjahr' => $payload['Geburtsjahr'] ?? null,
-      'gezeichnet' => $payload['gezeichnet'] ?? null,
-      'Rasse' => $payload['Rasse'] ?? null,
-      'Zuechter' => $payload['Züchter'] ?? ($payload['Zuechter'] ?? null),
-      'LN_Mutter' => $payload['LN_Mutter'] ?? null,
-      'LN_Vatermutter' => $payload['LN_Vatermutter'] ?? null,
-      'Belegstelle' => $payload['Belegstelle'] ?? null,
-    ]);
+    $stmt->execute(queen_params($payload));
     $new_id = (int)$pdo->lastInsertId();
     respond(['ok' => true, 'id' => $new_id], 201);
   }
 
-  if ($action === 'queen_update' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+  if ($action === 'queen_update') {
     $id = (int)require_param('id');
-    $payload = json_decode(file_get_contents('php://input'), true);
-    if (!is_array($payload)) $payload = $_POST;
 
     $sql = "UPDATE Queens SET
               Lebensnummer = :Lebensnummer,
@@ -1056,22 +750,19 @@ ORDER BY $orderBy;";
               Belegstelle = :Belegstelle
             WHERE ID = :id";
     $stmt = $pdo->prepare($sql);
-    $stmt->execute([
-      'id' => $id,
-      'Lebensnummer' => $payload['Lebensnummer'] ?? null,
-      'Geburtsjahr' => $payload['Geburtsjahr'] ?? null,
-      'gezeichnet' => $payload['gezeichnet'] ?? null,
-      'Rasse' => $payload['Rasse'] ?? null,
-      'Zuechter' => $payload['Züchter'] ?? ($payload['Zuechter'] ?? null),
-      'LN_Mutter' => $payload['LN_Mutter'] ?? null,
-      'LN_Vatermutter' => $payload['LN_Vatermutter'] ?? null,
-      'Belegstelle' => $payload['Belegstelle'] ?? null,
-    ]);
+    $params = queen_params($payload);
+    $params['id'] = $id;
+    $stmt->execute($params);
     respond(['ok' => true]);
   }
 
-  respond(['error' => 'Unknown action'], 404);
+  throw new LogicException("No handler implemented for action: {$action}");
 
 } catch (Throwable $e) {
-  respond(['error' => 'Server error', 'details' => $e->getMessage()], 500);
+  error_log('Apiary API error: ' . $e->getMessage());
+  $error = ['error' => 'Server error'];
+  if (getenv('APIARY_DEBUG') === '1') {
+    $error['details'] = $e->getMessage();
+  }
+  respond($error, 500);
 }

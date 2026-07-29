@@ -3,6 +3,8 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'self'"/>
   <title>Apiary Logbook</title>
   <link rel="stylesheet" href="styles.css"/>
 </head>
@@ -13,7 +15,7 @@
       <span></span>
       <span></span>
     </button>
-    <div class="brand" role="button" tabindex="0" onclick="location.hash='#/';">Apiary Logbook</div>
+    <div class="brand" role="button" tabindex="0" data-navigate="#/">Apiary Logbook</div>
     <nav class="tabs topbar-tabs">
       <a href="#/" id="tab-standorte">Locations</a>
       <a href="#/hives" id="tab-hives">Hives</a>
@@ -29,8 +31,8 @@
     <div id="topbar-menu" class="menu-panel">
       <div class="auth">
         <span id="auth-status" class="auth-status">Checking...</span>
-        <button id="auth-admin" class="btn" style="display:none">User Administration</button>
-        <button id="auth-account" class="btn" style="display:none">Change password</button>
+        <button id="auth-admin" class="btn" hidden>User Administration</button>
+        <button id="auth-account" class="btn" hidden>Change password</button>
         <button id="auth-action" class="btn">Log in</button>
       </div>
     </div>
@@ -45,8 +47,12 @@
   <footer class="footer">
   </footer>
 
-  <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/d3-sankey@0.12.3/dist/d3-sankey.min.js"></script>
-  <script src="app.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"
+          integrity="sha384-CjloA8y00+1SDAUkjs099PVfnY2KmDC2BZnws9kh8D/lX1s46w6EPhpXdqMfjK6i"
+          crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/d3-sankey@0.12.3/dist/d3-sankey.min.js"
+          integrity="sha384-SM54CE5h+qdDI046d2Y5ym7wq1kq4uxcQ1cqGq5/+5jrE5tPLeDJSq711Q8sIska"
+          crossorigin="anonymous"></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>

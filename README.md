@@ -5,8 +5,16 @@ Lightweight SPA + PHP JSON API for managing apiary visits, hives, and queens.
 ## Files
 - `index.html` – UI
 - `styles.css` – styling
-- `app.js` – SPA logic (hash routing)
-- `api.php` – JSON API (PDO, MySQL 8 window functions)
+- `app.js` – SPA pages, authentication state, and hash routing
+- `api-client.js` – HTTP/JSON client
+- `form-controller.js` – shared create/update/delete form workflow
+- `ui-utils.js` – HTML, date, card, and route helpers
+- `sankey-chart.js` – D3 rendering
+- `api.php` – JSON handlers, dispatcher, and persistence
+- `api-bootstrap.php` – environment loading and PDO connection
+- `api-routes.php` – HTTP method and role policy for every API action
+- `movements.php` – Sankey data query and graph construction
+- `tests/` – dependency-free PHP tests
 - `Apiary scheme.sql` – database schema (tables + constraints)
 
 ## Requirements
@@ -19,19 +27,18 @@ Lightweight SPA + PHP JSON API for managing apiary visits, hives, and queens.
 2. Ensure PHP + PDO MySQL are enabled.
 3. Configure the database connection (see below).
 4. Create the Apiary tables using the provided SQL script (see below).
-5. Ensure your Apiary schema tables/views exist (`Hives`, `Queens`, `Visits`, and `Visits_active`).
+5. Ensure the `Hives`, `Queens`, `Visits`, and `Users` tables exist.
 6. Create your first admin user via the login screen bootstrap.
 
 ## Database connection
 `api.php` reads these environment variables (recommended):
 - `APIARY_DB_HOST` (default: `localhost`)
 - `APIARY_DB_NAME` (default: `Apiary`)
-- `APIARY_DB_USER` (default: `username`)
-- `APIARY_DB_PASS` (default: `password  `)
+- `APIARY_DB_USER` (default: empty)
+- `APIARY_DB_PASS` (default: empty)
+- `APIARY_DEBUG` (`1` exposes exception details in API responses; leave unset in production)
 
 Security note: the MySQL user configured in `.env` should be restricted to connect from `localhost` only.
-
-Alternative: edit the defaults directly in `api.php`.
 
 ## .env file
 `api.php` loads a `.env` file from the same directory (`/var/www/html/apiary/.env`) if present. Example:
@@ -56,7 +63,7 @@ SetEnv APIARY_DB_PASS your_password
 ```
 
 ## Database schema (required)
-Load the schema file to create the tables and constraints:
+The schema script is intended for a fresh database. It drops existing Apiary tables and is not a migration. Load it with:
 
 ```
 mysql -u your_user -p Apiary < "Apiary scheme.sql"
@@ -99,7 +106,22 @@ After loading the schema, open the login screen. If no admin exists, you’ll se
 - Visit page: View/update visit form
 - New visit: Prefilled from latest visit of that hive
 - Queens list: View/edit/create
+- Movements: Sankey diagram for active hives in the current calendar year
 
 ## Notes
 - "Current location" is taken from the latest visit of a hive (Datum desc, ID desc).
 - Hives must be `inactive = 0` to show on location lists.
+- Creating a hive intentionally creates a synthetic first visit at location `NEW`; both writes run in one transaction.
+- Sankey start locations come from the latest visit before January 1.
+- A hive without an earlier location enters the Sankey on its first visit date.
+- If a hive has several visits on one date, the highest visit ID defines the end-of-day location.
+- D3 is loaded from jsDelivr at pinned versions; the document Content Security Policy allows that host.
+
+## Tests
+
+Run the dependency-free Sankey tests with:
+
+```
+php tests/movements_test.php
+php tests/routes_test.php
+```

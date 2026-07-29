@@ -27,37 +27,11 @@
   --fs-sm:18px;
   --fs-md:20px;
   --fs-lg:24px;
-
-  /* Border radius */
-  --br-sm: 4px;
-  --br-md: 10px;
-  --br-lg: 12px;
-  --br-xl: 14px;
-
-  /* Spacing */
-  --spacing-xs: 4px;
-  --spacing-sm: 6px;
-  --spacing-md: 8px;
-  --spacing-lg: 10px;
-  --spacing-xl: 12px;
-  --spacing-2xl: 14px;
-
-  /* Transitions */
   --transition-fast: 0.15s ease;
-  --transition-normal: 0.2s ease;
-  --transition-slow: 0.3s ease;
-
-  /* Shadows */
-  --shadow-sm: 0 2px 8px rgba(0,0,0,0.1);
-  --shadow-md: 0 4px 12px rgba(0,0,0,0.15);
-
-  /* Other */
-  --opacity-disabled: 0.5;
-  --z-sticky: 10;
-  --z-menu: 100;
 }
 
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html{
   scroll-behavior: smooth;
 }
@@ -232,6 +206,14 @@ a:hover{text-decoration:underline}
 
 .hstack{display:flex; gap:12px; align-items:center; justify-content:space-between; flex-wrap:wrap}
 .vstack{display:flex; flex-direction:column; gap:10px}
+.stack-tight{gap:4px}
+.stack-gap-sm{gap:8px}
+.form-actions{justify-content:flex-end; gap:8px}
+.form-actions-split{justify-content:space-between; gap:8px}
+.form-actions-split > .hstack:last-child{margin-left:auto}
+.table-actions{justify-content:flex-end; gap:8px}
+.spacer{height:12px}
+.field .checkbox-pill{display:flex; align-items:center; justify-content:flex-start; gap:8px; cursor:pointer}
 .muted{color:var(--muted)}
 .title{font-size:var(--fs-lg); font-weight:700}
 .title-md{font-size:var(--fs-md)}
@@ -459,6 +441,20 @@ fieldset.form:disabled{
   border-radius:4px;
 }
 .field textarea{min-height:90px; resize:vertical}
+.field-label-row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+  margin:0 0 6px;
+}
+.field-label-row label{margin:0}
+.field .todo-clear{
+  width:auto;
+  padding:3px 8px;
+  border-radius:8px;
+  font-size:var(--fs-xxs);
+}
 
 .segmented-button{
   display:inline-flex;

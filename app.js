@@ -1,55 +1,8 @@
 // app.js - vanilla SPA
-const API_URL = './api.php';
-
-// ============================================================================
-// CONFIGURATION
-// ============================================================================
-
-const CONFIG = {
-  BREAKPOINT_MOBILE: 720,
-  TIMEOUTS: {
-    SHORT: 200,
-    MEDIUM: 250,
-    LONG: 350
-  },
-  DEFAULTS: {
-    RESET_PASSWORD: '12345678',
-    UNKNOWN_VALUE: 'k.A.'
-  },
-  VALIDATION: {
-    MIN_PASSWORD_LENGTH: 7
-  }
-};
-
-// ============================================================================
-// UTILITIES
-// ============================================================================
-
-// Normalize form data: convert empty strings to null
-const normalizeFormData = (data) => {
-  Object.keys(data).forEach(k => {
-    if (data[k] === '') data[k] = null;
-  });
-  return data;
-};
-
-// Handle errors with logging and optional UI feedback
-const handleError = (err, msgElement, fallback = 'An error occurred') => {
-  console.error(err);
-  if (msgElement) msgElement.textContent = `Error: ${err?.message || fallback}`;
-};
-
-// Handle API response errors (consolidates apiGet/apiPost error handling)
-const handleApiResponse = async (res, opts = {}) => {
-  const data = await res.json().catch(() => ({}));
-  if (res.status === 401) {
-    setAuth(null);
-    if (!opts.suppressAuthRedirect) redirectToLogin();
-    throw new Error(data.error || 'Unauthorized');
-  }
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-  return data;
-};
+import { createApiClient } from './api-client.js';
+import { wireCrudForm } from './form-controller.js';
+import { renderSankeyChart } from './sankey-chart.js';
+import { card, fmtDate, htmlesc, joinEscaped, joinValues, parseRoute } from './ui-utils.js';
 
 // ============================================================================
 // DOM REFERENCES
@@ -66,37 +19,20 @@ const authAccount = document.getElementById('auth-account');
 const authAction = document.getElementById('auth-action');
 const topbarActions = document.getElementById('topbar-actions');
 const topbarBack = document.getElementById('topbar-back');
-const topbarRight = document.querySelector('.topbar-right');
-const topbarBrand = document.querySelector('.brand');
 const menuToggle = document.getElementById('menu-toggle');
 const menuPanel = document.getElementById('topbar-menu');
 
 const authState = { user: null, checked: false, csrf: null };
 let authReady = null;
-let topbarActionLayoutRaf = 0;
-
-function updateTopbarActionLayout() {
-  if (!topbarActions || !topbarRight || !topbarBrand) return;
-  const hasActions = !topbarActions.hidden && topbarActions.children.length > 0;
-  topbarActions.classList.remove('topbar-actions-wrapped');
-  if (!hasActions) return;
-
-  const firstRowTop = topbarBrand.offsetTop;
-  const actionsWrapped = topbarActions.offsetTop > firstRowTop + 1;
-  const backWrapped = topbarRight.offsetTop > firstRowTop + 1;
-  if (actionsWrapped || backWrapped) {
-    topbarActions.classList.add('topbar-actions-wrapped');
+const { get: apiGet, post: apiPost } = createApiClient({
+  getCsrfToken: () => authState.csrf,
+  onUnauthorized: (shouldRedirect) => {
+    setAuth(null);
+    if (shouldRedirect) {
+      redirectToLogin();
+    }
   }
-}
-
-function scheduleTopbarActionLayout() {
-  if (!topbarActions) return;
-  if (topbarActionLayoutRaf) cancelAnimationFrame(topbarActionLayoutRaf);
-  topbarActionLayoutRaf = requestAnimationFrame(() => {
-    topbarActionLayoutRaf = 0;
-    updateTopbarActionLayout();
-  });
-}
+});
 
 function setMenuOpen(open) {
   document.body.classList.toggle('menu-open', open);
@@ -111,7 +47,6 @@ function setTopbarBack(onClick = null) {
   if (!onClick) {
     topbarBack.hidden = true;
     topbarBack.onclick = null;
-    scheduleTopbarActionLayout();
     return;
   }
   topbarBack.hidden = false;
@@ -119,7 +54,6 @@ function setTopbarBack(onClick = null) {
     event.preventDefault();
     onClick();
   };
-  scheduleTopbarActionLayout();
 }
 
 function setTopbarActions(actions = []) {
@@ -127,8 +61,6 @@ function setTopbarActions(actions = []) {
   topbarActions.innerHTML = '';
   if (!actions || actions.length === 0) {
     topbarActions.hidden = true;
-    topbarActions.classList.remove('topbar-actions-wrapped');
-    scheduleTopbarActionLayout();
     return;
   }
   topbarActions.hidden = false;
@@ -146,7 +78,6 @@ function setTopbarActions(actions = []) {
     }
     topbarActions.appendChild(btn);
   });
-  scheduleTopbarActionLayout();
 }
 
 if (menuToggle) {
@@ -167,14 +98,12 @@ if (menuPanel) {
 
 window.addEventListener('hashchange', () => {
   setMenuOpen(false);
-  scheduleTopbarActionLayout();
 });
 
 window.addEventListener('resize', () => {
   if (window.innerWidth > 720) {
     setMenuOpen(false);
   }
-  scheduleTopbarActionLayout();
 });
 
 function setAuth(user, csrfToken = null) {
@@ -203,16 +132,16 @@ function updateAuthUi() {
     authStatus.textContent = `Signed in as ${name}`;
     if (authAdmin) {
       if (isAdmin()) {
-        authAdmin.style.display = '';
+        authAdmin.hidden = false;
         authAdmin.textContent = 'User Administration';
         authAdmin.onclick = () => {
           location.hash = '#/admin/users';
         };
       } else {
-        authAdmin.style.display = 'none';
+        authAdmin.hidden = true;
       }
     }
-    authAccount.style.display = '';
+    authAccount.hidden = false;
     authAccount.textContent = 'Change password';
     authAccount.onclick = () => {
       location.hash = '#/account';
@@ -232,8 +161,8 @@ function updateAuthUi() {
     };
   } else {
     authStatus.textContent = authState.checked ? 'Not signed in' : 'Checking...';
-    if (authAdmin) authAdmin.style.display = 'none';
-    authAccount.style.display = 'none';
+    if (authAdmin) authAdmin.hidden = true;
+    authAccount.hidden = true;
     authAction.textContent = 'Log in';
     authAction.onclick = () => {
       const next = encodeURIComponent(location.hash || '#/');
@@ -264,71 +193,13 @@ function setActiveTab(path) {
   tabQueens.classList.toggle('active', path.startsWith('/queens') || path.startsWith('/queen'));
 }
 
-function htmlesc(s) {
-  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-}
-
-async function apiGet(params, opts = {}) {
-  const url = new URL(API_URL, window.location.href);
-  Object.entries(params).forEach(([k,v]) => url.searchParams.set(k, v));
-  const res = await fetch(url.toString(), {
-    headers: { 'Accept': 'application/json' },
-    credentials: 'same-origin'
-  });
-  return handleApiResponse(res, opts);
-}
-
-async function apiPost(params, bodyObj, opts = {}) {
-  const url = new URL(API_URL, window.location.href);
-  Object.entries(params).forEach(([k,v]) => url.searchParams.set(k, v));
-  const headers = { 'Content-Type':'application/json', 'Accept':'application/json' };
-  if (authState.csrf) headers['X-CSRF-Token'] = authState.csrf;
-  const res = await fetch(url.toString(), {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(bodyObj ?? {}),
-    credentials: 'same-origin'
-  });
-  return handleApiResponse(res, opts);
-}
-
-function parseRoute() {
-  const h = (location.hash || '#/').slice(1);
-  const [path, query] = h.split('?');
-  const parts = path.split('/').filter(Boolean);
-  return { path: '/' + (parts[0] || ''), parts, query: new URLSearchParams(query || '') };
-}
-
-function card(title, subtitle, innerHtml, titleClass = '') {
-  const titleClassAttr = titleClass ? `title ${titleClass}` : 'title';
-  return `
-    <section class="card">
-      <div class="hstack">
-        <div class="vstack" style="gap:4px">
-          <div class="${titleClassAttr}">${htmlesc(title)}</div>
-          ${subtitle ? `<div class="subtitle">${htmlesc(subtitle)}</div>` : ''}
-        </div>
-      </div>
-      <div style="height:12px"></div>
-      ${innerHtml}
-    </section>
-  `;
-}
-
-function fmtDate(d) {
-  if (!d) return '—';
-  const m = String(d).match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (m) return `${m[3]}.${m[2]}.${m[1]}`;
-  return d;
-}
-
 function authGateHtml({ title, subtitle }) {
   const next = encodeURIComponent(location.hash || '#/');
   return card(title, subtitle, `
     <div class="notice">Please sign in to continue.</div>
-    <div style="height:12px"></div>
+    <div class="spacer"></div>
     <div class="hstack">
-      <button class="btn primary" onclick="location.hash='#/login?next=${next}'">Sign in</button>
+      <button class="btn primary" data-navigate="#/login?next=${next}">Sign in</button>
     </div>
   `);
 }
@@ -346,11 +217,11 @@ async function renderStandorte() {
   } else if (authState.user) {
     addHiveBtn = `<button class="btn" disabled>Read-only</button>`;
   } else {
-    addHiveBtn = `<button class="btn" onclick="location.hash='#/login?next=${encodeURIComponent('#/hive/new')}'">Sign in to add</button>`;
+    addHiveBtn = `<button class="btn" data-navigate="#/login?next=${encodeURIComponent('#/hive/new')}">Sign in to add</button>`;
   }
 
   const rows = data.standorte.map(r => `
-    <tr role="button" tabindex="0" onclick="location.hash='#/standort/${encodeURIComponent(r.Standort)}'">
+    <tr role="button" tabindex="0" data-navigate="#/standort/${encodeURIComponent(r.Standort)}">
       <td>${htmlesc(r.Standort)}</td>
       <td>${htmlesc(r.active_hives)}</td>
       <td>${r.todo_hives > 0 ? htmlesc(r.todo_hives) : ''}</td>
@@ -378,7 +249,7 @@ async function renderHives() {
       ? `${htmlesc(hive.queen_id)} · ${htmlesc(hive.queen_breed || '—')} · ${htmlesc(hive.queen_birth_year || '—')}`
       : '—';
     return `
-      <tr role="button" tabindex="0" onclick="location.hash='#/hive/${encodeURIComponent(hive.Hive_ID)}'">
+      <tr role="button" tabindex="0" data-navigate="#/hive/${encodeURIComponent(hive.Hive_ID)}">
         <td>${htmlesc(hive.Hive_nr || '—')}</td>
         <td>${htmlesc(hive.Standort || '—')}</td>
         <td>${htmlesc(fmtDate(hive.last_visit_date))}</td>
@@ -407,102 +278,18 @@ async function renderHiveMovements() {
   app.innerHTML = card('Hive Movements', null, `<div class="skeleton"></div>`);
   const data = await apiGet({ action:'hive_movements' });
 
-  if (!window.d3 || !d3.sankey || !d3.sankeyLinkHorizontal) {
+  if (!window.d3 || !window.d3.sankey || !window.d3.sankeyLinkHorizontal) {
     app.innerHTML = card('Hive Movements', null, `<div class="notice">Sankey library unavailable.</div>`);
     return;
   }
 
-  if (!data.links || data.links.length === 0) {
+  if ((!data.nodes || data.nodes.length === 0) && (!data.links || data.links.length === 0)) {
     app.innerHTML = card('Hive Movements', null, `<div class="notice">No hive movements found.</div>`);
     return;
   }
 
   app.innerHTML = card('Hive Movements', null, `<div id="sankey-chart" class="sankey-chart"></div>`);
-
-  const width = 960;
-  const height = Math.max(420, (data.nodes || []).length * 44, data.links.length * 28);
-  const columnLabels = data.columns || [];
-  const baseNodeCount = (data.nodes || []).length;
-  const dummyNodes = columnLabels.map((_, column) => ({ name: '', column, date: columnLabels[column], dummy: true }));
-  const dummyLinks = columnLabels.slice(1).map((_, i) => ({
-    source: baseNodeCount + i,
-    target: baseNodeCount + i + 1,
-    value: 0.000001,
-    dummy: true
-  }));
-  const graph = {
-    nodes: [...(data.nodes || []).map(d => ({ ...d })), ...dummyNodes],
-    links: [...data.links.map(d => ({ ...d })), ...dummyLinks]
-  };
-  const color = d3.scaleOrdinal(d3.schemeTableau10);
-
-  d3.sankey()
-    .nodeWidth(18)
-    .nodePadding(16)
-    .nodeAlign(d => d.column)
-    .nodeSort((a, b) => {
-      if (a.dummy || b.dummy) return Number(!!a.dummy) - Number(!!b.dummy);
-      return String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' });
-    })
-    .extent([[1, 48], [width - 1, height - 8]])(graph);
-
-  const svg = d3.select('#sankey-chart')
-    .append('svg')
-    .attr('viewBox', `0 0 ${width} ${height}`)
-    .attr('role', 'img')
-    .attr('aria-label', 'Hive movements between locations');
-
-  svg.append('g')
-    .attr('fill', 'none')
-    .selectAll('path')
-    .data(graph.links.filter(d => !d.dummy))
-    .join('path')
-    .attr('d', d3.sankeyLinkHorizontal())
-    .attr('stroke', d => color(d.source.name))
-    .attr('stroke-width', d => Math.max(1, d.width))
-    .attr('stroke-opacity', 0.34)
-    .append('title')
-    .text(d => `${d.date}: ${d.source.name} → ${d.target.name}: ${d.value}${d.hives ? `\n${d.hives}` : ''}`);
-
-  const node = svg.append('g')
-    .selectAll('g')
-    .data(graph.nodes.filter(d => !d.dummy))
-    .join('g');
-
-  node.append('rect')
-    .attr('x', d => d.x0)
-    .attr('y', d => d.y0)
-    .attr('height', d => Math.max(1, d.y1 - d.y0))
-    .attr('width', d => d.x1 - d.x0)
-    .attr('fill', d => color(d.name))
-    .attr('rx', 3)
-    .append('title')
-    .text(d => `${d.date}: ${d.name}: ${d.value}`);
-
-  node.append('text')
-    .attr('x', d => d.x0 < width / 2 ? d.x1 + 8 : d.x0 - 8)
-    .attr('y', d => (d.y0 + d.y1) / 2)
-    .attr('dy', '0.35em')
-    .attr('text-anchor', d => d.x0 < width / 2 ? 'start' : 'end')
-    .text(d => d.name);
-
-  const columnXs = columnLabels.map((_, column) => {
-    const columnNodes = graph.nodes.filter(d => d.column === column);
-    if (columnNodes.length > 0) {
-      return d3.mean(columnNodes, d => (d.x0 + d.x1) / 2);
-    }
-    return columnLabels.length <= 1 ? width / 2 : column * (width - 20) / (columnLabels.length - 1) + 10;
-  });
-
-  svg.append('g')
-    .attr('class', 'sankey-axis')
-    .selectAll('text')
-    .data(columnLabels)
-    .join('text')
-    .attr('x', (_, i) => columnXs[i])
-    .attr('y', 22)
-    .attr('text-anchor', 'middle')
-    .text(d => d);
+  renderSankeyChart(document.getElementById('sankey-chart'), data);
 }
 
 async function renderQueens() {
@@ -529,7 +316,7 @@ async function renderQueens() {
         </div>
       </div>
     </div>
-    <div style="height:12px"></div>
+    <div class="spacer"></div>
   `;
 
   app.innerHTML = `
@@ -557,13 +344,13 @@ async function renderQueens() {
       { label: 'Read-only', disabled: true }
     ]);
   } else {
-    addQueenBtn = `<button type="button" class="btn" onclick="location.hash='#/login?next=${encodeURIComponent('#/queen/new')}'">Sign in to add</button>`;
+    addQueenBtn = `<button type="button" class="btn" data-navigate="#/login?next=${encodeURIComponent('#/queen/new')}">Sign in to add</button>`;
   }
 
   const rows = data.queens.map(q => `
-    <tr class="${queenYearClass(q.Geburtsjahr)}" role="button" tabindex="0" onclick="location.hash='#/queen/${encodeURIComponent(q.ID)}'">
+    <tr class="${queenYearClass(q.Geburtsjahr)}" role="button" tabindex="0" data-navigate="#/queen/${encodeURIComponent(q.ID)}">
       <td>
-        <div class="vstack" style="gap:4px">
+        <div class="vstack stack-tight">
           <div class="qline">
             <div class="qleft">${joinParts([
               strong(q.ID),
@@ -577,7 +364,7 @@ async function renderQueens() {
           <div class="qline muted">
             <div class="qleft">${joinParts([
               htmlesc(q.Geburtsjahr || ''),
-              htmlesc(q.Züchter || ''),
+              htmlesc(q.Zuechter || ''),
               htmlesc(q.LN_Mutter || ''),
               htmlesc(q.LN_Vatermutter || ''),
             ])}</div>
@@ -623,7 +410,7 @@ async function renderQueenEdit(queenId) {
     const q = data.queen;
 
     app.innerHTML = card('Queen', `Edit #${q.ID}`, `
-      ${!writable ? `<div class="notice">Read-only access.</div><div style="height:12px"></div>` : ''}
+      ${!writable ? `<div class="notice">Read-only access.</div><div class="spacer"></div>` : ''}
       ${queenFormHtml({ q, mode:'update', readOnly: !writable })}
     `);
 
@@ -654,7 +441,7 @@ async function renderQueenCreate() {
     Geburtsjahr: null,
     gezeichnet: null,
     Rasse: null,
-    'Züchter': null,
+    Zuechter: null,
     LN_Mutter: null,
     LN_Vatermutter: null,
     Belegstelle: null,
@@ -670,7 +457,7 @@ async function renderQueenCreate() {
 function queenFormHtml({ q, mode='update', readOnly=false }) {
   const isCreate = mode === 'create';
   const submitLabel = isCreate ? 'Create queen' : 'Save changes';
-  const cancelAction = isCreate ? "location.hash='#/queens'" : 'history.back()';
+  const cancelAttrs = isCreate ? 'data-navigate="#/queens"' : 'data-back';
   const deleteBtn = isCreate || readOnly ? '' : `<button type="button" class="btn danger" id="queen-delete">Delete queen</button>`;
   const submitBtn = readOnly ? '' : `<button type="submit" class="btn primary">${submitLabel}</button>`;
 
@@ -699,7 +486,7 @@ function queenFormHtml({ q, mode='update', readOnly=false }) {
 
       <div class="field">
         <label>Breeder</label>
-        <input name="Zuechter" value="${htmlesc(q['Züchter'] || '')}" placeholder="Breeder name"/>
+        <input name="Zuechter" value="${htmlesc(q.Zuechter || '')}" placeholder="Breeder name"/>
       </div>
 
       <div class="field">
@@ -718,10 +505,10 @@ function queenFormHtml({ q, mode='update', readOnly=false }) {
       </div>
     </fieldset>
 
-    <div class="hstack" style="justify-content:space-between; gap:8px">
+    <div class="hstack form-actions-split">
       ${deleteBtn}
-      <div class="hstack" style="gap:8px">
-        <button type="button" class="btn" onclick="${cancelAction}">Cancel</button>
+      <div class="hstack stack-gap-sm">
+        <button type="button" class="btn" ${cancelAttrs}>Cancel</button>
         ${submitBtn}
       </div>
     </div>
@@ -731,43 +518,19 @@ function queenFormHtml({ q, mode='update', readOnly=false }) {
 }
 
 function wireQueenForm({ queenId, mode='update' }) {
-  const form = document.getElementById('queen-form');
-  const msg = document.getElementById('queen-form-msg');
-  const delBtn = document.getElementById('queen-delete');
-
-  if (delBtn) {
-    delBtn.addEventListener('click', async () => {
-      if (!confirm('Delete this queen? This cannot be undone.')) return;
-      msg.textContent = 'Deleting…';
-      try {
-        await apiPost({ action:'queen_delete', id: queenId }, {});
-        msg.textContent = 'Deleted.';
-        setTimeout(() => location.hash = '#/queens', 200);
-      } catch (err) {
-        msg.textContent = `Error: ${err.message}`;
-      }
-    });
-  }
-
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    msg.textContent = 'Saving…';
-
-    const data = normalizeFormData(Object.fromEntries(new FormData(form).entries()));
-
-    try {
-      if (mode === 'create') {
-        await apiPost({ action:'queen_create' }, data);
-        msg.textContent = 'Created.';
-        setTimeout(() => location.hash = '#/queens', 350);
-      } else {
-        await apiPost({ action:'queen_update', id: queenId }, data);
-        msg.textContent = 'Saved.';
-        setTimeout(() => location.hash = '#/queens', 350);
-      }
-    } catch (err) {
-      msg.textContent = `Error: ${err.message}`;
-    }
+  wireCrudForm({
+    apiPost,
+    formId: 'queen-form',
+    messageId: 'queen-form-msg',
+    mode,
+    id: queenId,
+    createAction: 'queen_create',
+    updateAction: 'queen_update',
+    deleteButtonId: 'queen-delete',
+    deleteAction: 'queen_delete',
+    deleteConfirm: 'Delete this queen? This cannot be undone.',
+    onSaved: () => { location.hash = '#/queens'; },
+    onDeleted: () => { location.hash = '#/queens'; }
   });
 }
 
@@ -779,14 +542,11 @@ async function renderStandortDetail(standort) {
   const locationTitle = `Hives at Location ${standort}`;
   app.innerHTML = card(locationTitle, '', `<div class="skeleton"></div>`, 'title');
   const data = await apiGet({ action:'hives_by_standort', standort });
-  const hasVal = v => v !== null && v !== undefined && String(v).trim().length > 0;
-  const joinParts = (parts, sep = ' ') => parts.filter(hasVal).map(v => htmlesc(v)).join(sep);
 
   const rows = data.hives.map(h => `
     <tr class="location-hive-primary" role="button" tabindex="0"
-      onclick="location.hash='#/hive/${h.Hive_ID}'"
-      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();location.hash='#/hive/${h.Hive_ID}'}">
-      <td>${joinParts([
+      data-navigate="#/hive/${h.Hive_ID}">
+      <td>${joinEscaped([
         h.Hive_nr || h.Hive_ID,
         h.last_visit_date ? fmtDate(h.last_visit_date) : '',
         'Q:',
@@ -796,18 +556,16 @@ async function renderStandortDetail(standort) {
       ])}</td>
     </tr>
     <tr class="location-hive-secondary" role="button" tabindex="0"
-      onclick="location.hash='#/hive/${h.Hive_ID}'"
-      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();location.hash='#/hive/${h.Hive_ID}'}">
+      data-navigate="#/hive/${h.Hive_ID}">
       <td>
         <div class="location-hive-secondary-line">
-          <span>${joinParts([h.Volksstaerke, h.Aufbau, h.Schwarmneigung])}</span>
+          <span>${joinEscaped([h.Volksstaerke, h.Aufbau, h.Schwarmneigung])}</span>
           <span class="location-hive-todo">${htmlesc(h.ToDo || '')}</span>
         </div>
       </td>
     </tr>
     <tr class="location-hive-remarks" role="button" tabindex="0"
-      onclick="location.hash='#/hive/${h.Hive_ID}'"
-      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();location.hash='#/hive/${h.Hive_ID}'}">
+      data-navigate="#/hive/${h.Hive_ID}">
       <td>${htmlesc(h.Bemerkungen || '')}</td>
     </tr>
   `).join('');
@@ -827,8 +585,6 @@ async function renderHive(hiveId) {
   app.innerHTML = card('Hive', `#${hiveId}`, `<div class="skeleton"></div>`);
   const data = await apiGet({ action:'visits_by_hive', hive_id: hiveId });
   const canEdit = canWrite();
-  const hasVal = v => v !== null && v !== undefined && String(v).length > 0;
-  const joinParts = (parts, sep) => parts.filter(hasVal).map(v => htmlesc(v)).join(sep);
   if (canEdit) {
     setTopbarActions([
       { label: 'Edit Hive', onClick: () => { location.hash = `#/hive/${hiveId}/edit`; } },
@@ -836,20 +592,19 @@ async function renderHive(hiveId) {
     ]);
   }
   const editButtons = canEdit ? '' : (authState.user ? `
-      <div class="hstack" style="gap:8px">
+      <div class="hstack stack-gap-sm">
         <button class="btn" disabled>Read-only</button>
       </div>
     ` : `
-      <div class="hstack" style="gap:8px">
-        <button class="btn" onclick="location.hash='#/login?next=${encodeURIComponent(`#/hive/${hiveId}`)}'">Sign in to edit</button>
+      <div class="hstack stack-gap-sm">
+        <button class="btn" data-navigate="#/login?next=${encodeURIComponent(`#/hive/${hiveId}`)}">Sign in to edit</button>
       </div>
     `);
 
   const hiveTitle = data.hive?.Hive_nr ? `Hive Nr. ${data.hive.Hive_nr}` : `Hive ID: #${hiveId}`;
   const latestVisit = data.visits && data.visits.length ? data.visits[0] : null;
-  const joinRawParts = (parts, sep = ' ') => parts.filter(hasVal).map(v => String(v)).join(sep);
   const queenSummary = latestVisit
-    ? joinRawParts([latestVisit.queen_breed, latestVisit.queen_marked, latestVisit.queen_birth_year], ' ')
+    ? joinValues([latestVisit.queen_breed, latestVisit.queen_marked, latestVisit.queen_birth_year], ' ')
     : '';
   const hiveSubtitle = [
     `Queen: ${queenSummary || '—'}`,
@@ -858,32 +613,31 @@ async function renderHive(hiveId) {
   ].join('\n');
 
   const rows = data.visits.map(v => {
-    const clickAttr = `onclick="location.hash='#/visit/${v.ID}'"`;
-    const keyboardNavAttr = `${clickAttr} role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();location.hash='#/visit/${v.ID}'}"`;
+    const navigationAttrs = `data-navigate="#/visit/${v.ID}" role="button" tabindex="0"`;
     const brood = [v.Brut_Stifte, v.Brut_offen, v.Brut_verdeckelt].join('/');
-    const queenParts = [v.Queen_ID, v.Koenigin_status].filter(hasVal).map(String).join(' ');
+    const queenParts = joinValues([v.Queen_ID, v.Koenigin_status]);
     const queen = `Q:${htmlesc(queenParts)}`;
     const temperament = [v.Sanftmut, v.Wabensitz, v.Schwarmneigung].join('/');
     const honeyFeed = ['H:', v.Honig, ' F: ',v.Futter].join('');
     const strength = htmlesc(v.Volksstaerke || '');
-    const locationSetup = joinParts([v.Standort, v.Aufbau], ': ');
+    const locationSetup = joinEscaped([v.Standort, v.Aufbau], ': ');
     return `
-      <tr class="hive-visit-row hive-visit-row-1" ${keyboardNavAttr}>
+      <tr class="hive-visit-row hive-visit-row-1" ${navigationAttrs}>
         <td class="hive-visit-left"><strong>${htmlesc(v.Datum ? fmtDate(v.Datum) : '')}</strong></td>
         <td class="hive-visit-left" colspan="3">${locationSetup}</td>
         <td class="hive-visit-right">${strength}</td>
       </tr>
-      <tr class="hive-visit-row hive-visit-row-2" ${clickAttr}>
+      <tr class="hive-visit-row hive-visit-row-2" ${navigationAttrs}>
         <td class="hive-visit-left">Brut:${brood}</td>
         <td class="hive-visit-left">${queen}</td>
         <td class="hive-visit-left">${temperament}</td>
         <td class="hive-visit-left">${honeyFeed}</td>
       </tr>
-      <tr class="hive-visit-row hive-visit-row-3" ${clickAttr}>
+      <tr class="hive-visit-row hive-visit-row-3" ${navigationAttrs}>
         <td class="hive-visit-left" colspan="4">${htmlesc(v.Bemerkungen || '')}</td>
         <td class="hive-visit-right hive-visit-todo">${htmlesc(v.ToDo || '')}</td>
       </tr>
-      <tr class="hive-visit-row hive-visit-row-4" ${clickAttr}>
+      <tr class="hive-visit-row hive-visit-row-4" ${navigationAttrs}>
         <td colspan="5">&nbsp;</td>
       </tr>
     `;
@@ -914,7 +668,7 @@ async function renderHiveEdit(hiveId) {
     const h = data.hive;
 
     app.innerHTML = card('Hive', `Edit #${hiveId}`, `
-      ${!writable ? `<div class="notice">Read-only access.</div><div style="height:12px"></div>` : ''}
+      ${!writable ? `<div class="notice">Read-only access.</div><div class="spacer"></div>` : ''}
       ${hiveFormHtml({ h, mode:'update', readOnly: !writable })}
     `);
 
@@ -951,7 +705,7 @@ async function renderHiveCreate() {
 function hiveFormHtml({ h, mode='update', readOnly=false }) {
   const isCreate = mode === 'create';
   const submitLabel = isCreate ? 'Create hive' : 'Save changes';
-  const cancelAction = isCreate ? "location.hash='#/'" : 'history.back()';
+  const cancelAttrs = isCreate ? 'data-navigate="#/"' : 'data-back';
   const submitBtn = readOnly ? '' : `<button type="submit" class="btn primary">${submitLabel}</button>`;
 
   return `
@@ -964,15 +718,15 @@ function hiveFormHtml({ h, mode='update', readOnly=false }) {
 
       <div class="field">
         <label>Inactive</label>
-        <label class="pill" style="justify-content:flex-start; gap:8px; cursor:pointer;">
+        <label class="checkbox-pill">
           <input type="checkbox" name="inactive" value="1" ${String(h.inactive) === '1' ? 'checked' : ''}/>
           Mark hive as inactive
         </label>
       </div>
     </fieldset>
 
-    <div class="hstack" style="justify-content:flex-end; gap:8px">
-      <button type="button" class="btn" onclick="${cancelAction}">Cancel</button>
+    <div class="hstack form-actions">
+      <button type="button" class="btn" ${cancelAttrs}>Cancel</button>
       ${submitBtn}
     </div>
 
@@ -981,28 +735,21 @@ function hiveFormHtml({ h, mode='update', readOnly=false }) {
 }
 
 function wireHiveForm({ hiveId, mode='update' }) {
-  const form = document.getElementById('hive-form');
-  const msg = document.getElementById('hive-form-msg');
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    msg.textContent = 'Saving…';
-
-    const data = Object.fromEntries(new FormData(form).entries());
-    data.inactive = data.inactive ? 1 : 0;
-    if (data.Hive_nr === '') data.Hive_nr = null;
-
-    try {
-      if (mode === 'create') {
-        await apiPost({ action:'hive_create' }, data);
-        msg.textContent = 'Created.';
-        setTimeout(() => location.hash = '#/', 350);
-      } else {
-        await apiPost({ action:'hive_update', id: hiveId }, data);
-        msg.textContent = 'Saved.';
-        setTimeout(() => location.hash = `#/hive/${hiveId}`, 350);
-      }
-    } catch (err) {
-      msg.textContent = `Error: ${err.message}`;
+  wireCrudForm({
+    apiPost,
+    formId: 'hive-form',
+    messageId: 'hive-form-msg',
+    mode,
+    id: hiveId,
+    createAction: 'hive_create',
+    updateAction: 'hive_update',
+    transform: (data) => ({
+      Hive_nr: data.Hive_nr || null,
+      inactive: data.inactive ? 1 : 0
+    }),
+    onSaved: (result) => {
+      const targetId = mode === 'create' ? result.id : hiveId;
+      location.hash = `#/hive/${targetId}`;
     }
   });
 }
@@ -1040,13 +787,13 @@ async function renderNewVisit(hiveId) {
     Honig: '',
     Futter: '',
     Bemerkungen: '',
-    ToDo: ''
+    ToDo: d?.ToDo ?? ''
   };
   const queens = queensRes.queens || [];
 
-  app.innerHTML = card('New visit', `Hive #${hiveId} (prefilled: location, queen, setup)`, `
-    <div class="notice">Tip: only location, queen ID, and setup are prefilled from the latest visit (if any).</div>
-    <div style="height:12px"></div>
+  app.innerHTML = card('New visit', `Hive #${hiveId} (prefilled: location, queen, setup, to-do)`, `
+    <div class="notice">Tip: location, queen ID, setup, and to-do are prefilled from the latest visit (if any).</div>
+    <div class="spacer"></div>
     ${visitFormHtml({ mode:'create', hiveId, visit: prefill, queens, readOnly: false })}
   `);
 
@@ -1073,7 +820,7 @@ async function renderVisit(visitId) {
   const queens = queensRes.queens || [];
 
   app.innerHTML = card('Visit', `Hive #${hiveId} · ${fmtDate(v.Datum)} · Visit #${visitId}`, `
-    ${!writable ? `<div class="notice">Read-only access.</div><div style="height:12px"></div>` : ''}
+    ${!writable ? `<div class="notice">Read-only access.</div><div class="spacer"></div>` : ''}
     ${visitFormHtml({ mode:'update', hiveId, visitId, readOnly: !writable, visit: {
       ...v,
       Volksstaerke: v.Volksstaerke ?? v['Volksstärke'],
@@ -1088,6 +835,9 @@ function visitFormHtml({ mode, hiveId, visitId, visit, queens, readOnly=false })
   const isCreate = mode === 'create';
   const deleteBtn = isCreate || readOnly ? '' : `<button type="button" class="btn danger" id="visit-delete">Delete visit</button>`;
   const submitBtn = readOnly ? '' : `<button type="submit" class="btn primary">${mode === 'create' ? 'Create visit' : 'Save changes'}</button>`;
+  const todoClearBtn = isCreate && !readOnly
+    ? `<button type="button" class="btn todo-clear" id="visit-todo-clear">Clear</button>`
+    : '';
   const vs = String(visit.Volksstaerke ?? '');
   const vsNorm = vs === 'k.A.' ? '' : vs;
   const tm = String(visit.Sanftmut ?? '');
@@ -1259,15 +1009,18 @@ function visitFormHtml({ mode, hiveId, visitId, visit, queens, readOnly=false })
       </div>
 
       <div class="field full">
-        <label>To‑do</label>
-        <textarea name="ToDo">${htmlesc(visit.ToDo || '')}</textarea>
+        <div class="field-label-row">
+          <label for="visit-todo">To‑do</label>
+          ${todoClearBtn}
+        </div>
+        <textarea id="visit-todo" name="ToDo">${htmlesc(visit.ToDo || '')}</textarea>
       </div>
     </fieldset>
 
-    <div class="hstack" style="justify-content:space-between; gap:8px">
+    <div class="hstack form-actions-split">
       ${deleteBtn}
-      <div class="hstack" style="gap:8px">
-        <button type="button" class="btn" onclick="history.back()">Cancel</button>
+      <div class="hstack stack-gap-sm">
+        <button type="button" class="btn" data-back>Cancel</button>
         ${submitBtn}
       </div>
     </div>
@@ -1278,57 +1031,29 @@ function visitFormHtml({ mode, hiveId, visitId, visit, queens, readOnly=false })
 
 function wireVisitForm({ mode, hiveId, visitId }) {
   const form = document.getElementById('visit-form');
-  const msg = document.getElementById('form-msg');
-  const delBtn = document.getElementById('visit-delete');
-  const returnToHiveWithHistory = () => {
-    const currentHash = location.hash || '#/';
-    const fallbackHash = `#/hive/${hiveId}`;
-    if (window.history.length > 1) {
-      history.back();
-      // Fallback for direct-entry routes where back cannot return inside the app.
-      setTimeout(() => {
-        if ((location.hash || '#/') === currentHash) {
-          location.hash = fallbackHash;
-        }
-      }, 250);
-      return;
-    }
-    location.hash = fallbackHash;
-  };
+  const todoClearBtn = document.getElementById('visit-todo-clear');
+  const todoField = form.elements.namedItem('ToDo');
 
-  if (delBtn) {
-    delBtn.addEventListener('click', async () => {
-      if (!confirm('Delete this visit? This cannot be undone.')) return;
-      msg.textContent = 'Deleting…';
-      try {
-        await apiPost({ action:'visit_delete', id: visitId }, {});
-        msg.textContent = 'Deleted.';
-        setTimeout(returnToHiveWithHistory, 200);
-      } catch (err) {
-        msg.textContent = `Error: ${err.message}`;
-      }
+  if (todoClearBtn && todoField) {
+    todoClearBtn.addEventListener('click', () => {
+      todoField.value = '';
+      todoField.focus();
     });
   }
 
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    msg.textContent = 'Saving…';
-
-    const data = normalizeFormData(Object.fromEntries(new FormData(form).entries()));
-
-    try {
-      if (mode === 'create') {
-        await apiPost({ action:'visit_create' }, data);
-        msg.textContent = 'Created.';
-        setTimeout(returnToHiveWithHistory, 350);
-      } else {
-        await apiPost({ action:'visit_update', id: visitId }, data);
-        msg.textContent = 'Saved.';
-        setTimeout(returnToHiveWithHistory, 350);
-      }
-    } catch (err) {
-      msg.textContent = `Error: ${err.message}`;
-    }
+  wireCrudForm({
+    apiPost,
+    formId: 'visit-form',
+    messageId: 'form-msg',
+    mode,
+    id: visitId,
+    createAction: 'visit_create',
+    updateAction: 'visit_update',
+    deleteButtonId: 'visit-delete',
+    deleteAction: 'visit_delete',
+    deleteConfirm: 'Delete this visit? This cannot be undone.',
+    onSaved: () => { location.hash = `#/hive/${hiveId}`; },
+    onDeleted: () => { location.hash = `#/hive/${hiveId}`; }
   });
 }
 
@@ -1351,16 +1076,16 @@ function renderLogin(r) {
           <input type="password" name="password" autocomplete="current-password" required />
         </div>
       </div>
-      <div class="hstack" style="justify-content:flex-end; gap:8px">
-        <button type="button" class="btn" onclick="history.back()">Cancel</button>
+      <div class="hstack form-actions">
+        <button type="button" class="btn" data-back>Cancel</button>
         <button type="submit" class="btn primary">Sign in</button>
       </div>
       <div id="login-msg" class="muted" aria-live="polite"></div>
     </form>
-    <div id="login-bootstrap" class="notice" style="display:none">
-      <div class="vstack" style="gap:8px">
+    <div id="login-bootstrap" class="notice" hidden>
+      <div class="vstack stack-gap-sm">
         <div>No admin user exists yet. Create a default admin account (admin / admin).</div>
-        <div class="hstack" style="justify-content:flex-end; gap:8px">
+        <div class="hstack form-actions">
           <button type="button" id="login-bootstrap-btn" class="btn primary">Create admin user</button>
         </div>
         <div id="login-bootstrap-msg" class="muted" aria-live="polite"></div>
@@ -1389,13 +1114,13 @@ function renderLogin(r) {
     try {
       const status = await apiGet({ action:'admin_bootstrap_status' }, { suppressAuthRedirect: true });
       if (status && status.exists) {
-        bootstrapBox.style.display = 'none';
+        bootstrapBox.hidden = true;
         return;
       }
-      bootstrapBox.style.display = '';
+      bootstrapBox.hidden = false;
       await ensureAnonymousCsrf();
     } catch (_) {
-      bootstrapBox.style.display = 'none';
+      bootstrapBox.hidden = true;
     }
   }
 
@@ -1424,7 +1149,7 @@ function renderLogin(r) {
         await ensureAnonymousCsrf();
         await apiPost({ action:'admin_bootstrap_create' }, { confirm: true }, { suppressAuthRedirect: true });
         if (bootstrapMsg) bootstrapMsg.textContent = 'Admin user created. You can sign in with admin / admin.';
-        bootstrapBtn.style.display = 'none';
+        bootstrapBtn.hidden = true;
         const usernameInput = form.querySelector('input[name="username"]');
         const passwordInput = form.querySelector('input[name="password"]');
         if (usernameInput) usernameInput.value = 'admin';
@@ -1459,8 +1184,8 @@ function renderAccount() {
           <input type="password" name="confirm_password" autocomplete="new-password" minlength="7" required />
         </div>
       </div>
-      <div class="hstack" style="justify-content:flex-end; gap:8px">
-        <button type="button" class="btn" onclick="history.back()">Cancel</button>
+      <div class="hstack form-actions">
+        <button type="button" class="btn" data-back>Cancel</button>
         <button type="submit" class="btn primary">Update password</button>
       </div>
       <div id="password-msg" class="muted" aria-live="polite"></div>
@@ -1529,7 +1254,7 @@ async function renderUserAdmin() {
         <td>${roleSelect}</td>
         <td>${htmlesc(u.created_at || '—')}</td>
         <td>${htmlesc(u.last_login || '—')}</td>
-        <td class="hstack" style="gap:8px; justify-content:flex-end;">
+        <td class="hstack table-actions">
           ${resetBtn}
           ${delBtn}
         </td>
@@ -1540,11 +1265,11 @@ async function renderUserAdmin() {
   app.innerHTML = card('User Administration', 'Manage users', `
     <div class="hstack">
       <div class="muted">Admins can add or remove users.</div>
-      <div class="hstack" style="gap:8px">
-        <button class="btn primary" onclick="location.hash='#/admin/users/new'">Add User</button>
+      <div class="hstack stack-gap-sm">
+        <button class="btn primary" data-navigate="#/admin/users/new">Add User</button>
       </div>
     </div>
-    <div style="height:12px"></div>
+    <div class="spacer"></div>
     <table class="table">
       <thead><tr>
         <th>ID</th>
@@ -1564,11 +1289,11 @@ async function renderUserAdmin() {
     btn.addEventListener('click', async () => {
       const id = btn.getAttribute('data-id');
       const name = btn.getAttribute('data-name') || 'this user';
-      if (!confirm(`Reset password for ${name} to 12345678?`)) return;
+      if (!confirm(`Reset password for ${name} to the configured temporary password?`)) return;
       msg.textContent = 'Resetting password...';
       try {
-        await apiPost({ action:'user_reset_password' }, { id });
-        msg.textContent = 'Password reset.';
+        const result = await apiPost({ action:'user_reset_password' }, { id });
+        msg.textContent = `Password reset to ${result.temporary_password}.`;
       } catch (err) {
         msg.textContent = `Error: ${err.message}`;
       }
@@ -1606,7 +1331,7 @@ async function renderUserAdmin() {
       try {
         await apiPost({ action:'user_delete' }, { id });
         msg.textContent = 'Deleted.';
-        setTimeout(() => renderUserAdmin(), 200);
+        renderUserAdmin();
       } catch (err) {
         msg.textContent = `Error: ${err.message}`;
       }
@@ -1641,8 +1366,8 @@ function renderUserCreate() {
           <input type="password" name="confirm_password" autocomplete="new-password" minlength="7" required />
         </div>
       </div>
-      <div class="hstack" style="justify-content:flex-end; gap:8px">
-        <button type="button" class="btn" onclick="history.back()">Cancel</button>
+      <div class="hstack form-actions">
+        <button type="button" class="btn" data-back>Cancel</button>
         <button type="submit" class="btn primary">Create user</button>
       </div>
       <div id="user-create-msg" class="muted" aria-live="polite"></div>
@@ -1665,7 +1390,7 @@ function renderUserCreate() {
         { username: data.username, role: data.role, password: data.password }
       );
       msg.textContent = 'User created.';
-      setTimeout(() => location.hash = '#/admin/users', 300);
+      location.hash = '#/admin/users';
     } catch (err) {
       msg.textContent = `Error: ${err.message}`;
     }
@@ -1721,19 +1446,43 @@ async function router() {
     return renderVisit(visitId);
   }
 
-  // default
-  return renderStandorte();
+  setActiveTab('');
+  app.innerHTML = card('Not found', null, `<div class="notice">The requested page does not exist.</div>`);
 }
 
-// Global event delegation for navigation and actions
-document.addEventListener('click', (e) => {
-  const target = e.target.closest('[data-navigate]');
-  if (target) {
-    e.preventDefault();
-    location.hash = target.dataset.navigate;
+async function runRouter() {
+  try {
+    await router();
+  } catch (error) {
+    app.innerHTML = card('Error', null, `
+      <div class="notice">Unable to load this page: ${htmlesc(error.message)}</div>
+    `);
   }
+}
+
+function activateNavigation(target, event) {
+  if (!target) {
+    return;
+  }
+  event.preventDefault();
+  if (target.hasAttribute('data-back')) {
+    history.back();
+    return;
+  }
+  location.hash = target.dataset.navigate;
+}
+
+document.addEventListener('click', (event) => {
+  activateNavigation(event.target.closest('[data-navigate], [data-back]'), event);
+});
+
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter' && event.key !== ' ') {
+    return;
+  }
+  activateNavigation(event.target.closest('[data-navigate], [data-back]'), event);
 });
 
 authReady = initAuth();
-window.addEventListener('hashchange', router);
-window.addEventListener('load', router);
+window.addEventListener('hashchange', runRouter);
+window.addEventListener('load', runRouter);
