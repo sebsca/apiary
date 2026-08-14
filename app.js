@@ -17,8 +17,10 @@ const authStatus = document.getElementById('auth-status');
 const authAdmin = document.getElementById('auth-admin');
 const authAccount = document.getElementById('auth-account');
 const authAction = document.getElementById('auth-action');
+const topbarToolbar = document.getElementById('topbar-toolbar');
 const topbarActions = document.getElementById('topbar-actions');
 const topbarBack = document.getElementById('topbar-back');
+const topbarLocation = document.getElementById('topbar-location');
 const menuToggle = document.getElementById('menu-toggle');
 const menuPanel = document.getElementById('topbar-menu');
 
@@ -42,11 +44,18 @@ function setMenuOpen(open) {
   }
 }
 
-function setTopbarBack(onClick = null) {
+function syncTopbarToolbar() {
+  if (!topbarToolbar) return;
+  topbarToolbar.hidden = topbarBack.hidden && topbarLocation.hidden && topbarActions.hidden;
+}
+
+function setTopbarBack(onClick = null, label = 'Back') {
   if (!topbarBack) return;
+  topbarBack.textContent = label;
   if (!onClick) {
     topbarBack.hidden = true;
     topbarBack.onclick = null;
+    syncTopbarToolbar();
     return;
   }
   topbarBack.hidden = false;
@@ -54,13 +63,33 @@ function setTopbarBack(onClick = null) {
     event.preventDefault();
     onClick();
   };
+  syncTopbarToolbar();
+}
+
+function setTopbarLocation(onClick = null, label = '') {
+  if (!topbarLocation) return;
+  topbarLocation.textContent = label;
+  if (!onClick) {
+    topbarLocation.hidden = true;
+    topbarLocation.onclick = null;
+    syncTopbarToolbar();
+    return;
+  }
+  topbarLocation.hidden = false;
+  topbarLocation.onclick = (event) => {
+    event.preventDefault();
+    onClick();
+  };
+  syncTopbarToolbar();
 }
 
 function setTopbarActions(actions = []) {
   if (!topbarActions) return;
   topbarActions.innerHTML = '';
+  topbarActions.classList.toggle('align-left', !!actions?.some(action => action.alignLeft));
   if (!actions || actions.length === 0) {
     topbarActions.hidden = true;
+    syncTopbarToolbar();
     return;
   }
   topbarActions.hidden = false;
@@ -78,6 +107,7 @@ function setTopbarActions(actions = []) {
     }
     topbarActions.appendChild(btn);
   });
+  syncTopbarToolbar();
 }
 
 if (menuToggle) {
@@ -244,7 +274,8 @@ async function renderHives() {
   app.innerHTML = card('Hives', null, `<div class="skeleton"></div>`);
   const data = await apiGet({ action:'hives' });
 
-  const rows = (data.hives || []).map(hive => {
+  const hives = data.hives || [];
+  const renderHiveRows = hiveRows => hiveRows.map(hive => {
     const queen = hive.queen_id
       ? `${htmlesc(hive.queen_id)} · ${htmlesc(hive.queen_breed || '—')} · ${htmlesc(hive.queen_birth_year || '—')}`
       : '—';
@@ -258,19 +289,67 @@ async function renderHives() {
     `;
   }).join('');
 
+  const sortValues = {
+    hive: hive => hive.Hive_nr || hive.Hive_ID,
+    location: hive => hive.Standort,
+    date: hive => hive.last_visit_date,
+    queen: hive => hive.queen_id
+      ? `${hive.queen_id} ${hive.queen_breed || ''} ${hive.queen_birth_year || ''}`
+      : null
+  };
+  const compareValues = (left, right, ascending) => {
+    const leftEmpty = left === null || left === undefined || left === '';
+    const rightEmpty = right === null || right === undefined || right === '';
+    if (leftEmpty !== rightEmpty) return leftEmpty ? 1 : -1;
+    const comparison = String(left || '').localeCompare(
+      String(right || ''),
+      undefined,
+      { numeric: true, sensitivity: 'base' }
+    );
+    return ascending ? comparison : -comparison;
+  };
+  const sortHives = (key, ascending) => [...hives].sort((a, b) => (
+    compareValues(sortValues[key](a), sortValues[key](b), ascending)
+      || compareValues(a.Hive_ID, b.Hive_ID, true)
+  ));
+
   app.innerHTML = card('Hives', null, `
     <table class="table">
       <thead>
         <tr>
-          <th>Hive_Nr</th>
-          <th>Location</th>
-          <th>Last visit</th>
-          <th>Queen (ID · Breed · Birth year)</th>
+          <th><button type="button" class="table-sort-button" data-hive-sort="hive">Hive_Nr</button></th>
+          <th><button type="button" class="table-sort-button" data-hive-sort="location">Location</button></th>
+          <th><button type="button" class="table-sort-button" data-hive-sort="date">Last visit</button></th>
+          <th><button type="button" class="table-sort-button" data-hive-sort="queen">Queen (ID · Breed · Birth year)</button></th>
         </tr>
       </thead>
-      <tbody>${rows || `<tr><td colspan="4" class="muted">No active hives found.</td></tr>`}</tbody>
+      <tbody id="hives-table-body">${renderHiveRows(sortHives('hive', true)) || `<tr><td colspan="4" class="muted">No active hives found.</td></tr>`}</tbody>
     </table>
   `);
+
+  const tableBody = document.getElementById('hives-table-body');
+  const sortButtons = [...app.querySelectorAll('[data-hive-sort]')];
+  let activeSort = 'hive';
+  let ascending = true;
+  const updateSortIndicators = () => {
+    sortButtons.forEach(sortButton => {
+      const isActive = sortButton.dataset.hiveSort === activeSort;
+      sortButton.closest('th').setAttribute('aria-sort', isActive ? (ascending ? 'ascending' : 'descending') : 'none');
+      sortButton.classList.toggle('active', isActive);
+      sortButton.dataset.direction = isActive ? (ascending ? 'asc' : 'desc') : '';
+    });
+  };
+  sortButtons.forEach(button => {
+    button.addEventListener('click', () => {
+      const key = button.dataset.hiveSort;
+      ascending = activeSort === key ? !ascending : true;
+      activeSort = key;
+      tableBody.innerHTML = renderHiveRows(sortHives(key, ascending))
+        || `<tr><td colspan="4" class="muted">No active hives found.</td></tr>`;
+      updateSortIndicators();
+    });
+  });
+  updateSortIndicators();
 }
 
 async function renderHiveMovements() {
@@ -294,38 +373,31 @@ async function renderHiveMovements() {
 
 async function renderQueens() {
   setActiveTab('/queens');
-  const route = parseRoute();
   const sortOptions = {
-    birth: 'Geburtsjahr + ID',
-    id: 'ID',
-    location: 'Standort + Hive_nr'
+    birth: { label: 'Geburtsjahr + ID', defaultAscending: false },
+    id: { label: 'ID', defaultAscending: false },
+    location: { label: 'Standort + Hive_nr', defaultAscending: true, alignRight: true }
   };
-  const requestedSort = route.query.get('sort') || 'birth';
-  const activeSort = Object.prototype.hasOwnProperty.call(sortOptions, requestedSort) ? requestedSort : 'birth';
-  const sortControls = Object.entries(sortOptions).map(([value, label]) => `
-    <label>
-      <input type="radio" name="queen-sort" value="${htmlesc(value)}" ${activeSort === value ? 'checked' : ''}/>
-      <span>${htmlesc(label)}</span>
-    </label>
-  `).join('');
+  let activeSort = 'birth';
+  let ascending = sortOptions[activeSort].defaultAscending;
   const sortHeader = `
-    <div class="queen-table-title">
-      <div class="field queen-sort-field">
-        <div class="segmented-button segmented-button-neutral" role="group" aria-label="Queen sort order">
-          ${sortControls}
-        </div>
-      </div>
-    </div>
-    <div class="spacer"></div>
+    <thead>
+      <tr>
+        ${Object.entries(sortOptions).map(([value, option]) => `
+          <th><button type="button" class="table-sort-button${option.alignRight ? ' align-right' : ''}" data-queen-sort="${htmlesc(value)}">${htmlesc(option.label)}</button></th>
+        `).join('')}
+      </tr>
+    </thead>
   `;
 
-  app.innerHTML = `
-    <section class="card">
+  app.innerHTML = card('Queens', null, `
+    <table class="table queens-table">
       ${sortHeader}
-      <div class="skeleton"></div>
-    </section>
-  `;
-  const data = await apiGet({ action:'queens', sort: activeSort });
+      <tbody><tr><td colspan="3"><div class="skeleton"></div></td></tr></tbody>
+    </table>
+  `);
+  const data = await apiGet({ action:'queens' });
+  const queens = data.queens || [];
   const canEdit = canWrite();
   const strong = v => (v ? `<strong>${htmlesc(v)}</strong>` : '');
   const joinParts = parts => parts.filter(p => p && String(p).length > 0).join(' · ');
@@ -334,6 +406,35 @@ async function renderQueens() {
     if (!Number.isFinite(digit)) return '';
     return `queen-year-${digit % 5}`;
   };
+  const compareValues = (left, right, sortAscending) => {
+    const leftEmpty = left === null || left === undefined || left === '';
+    const rightEmpty = right === null || right === undefined || right === '';
+    if (leftEmpty !== rightEmpty) return leftEmpty ? 1 : -1;
+    const comparison = String(left || '').localeCompare(
+      String(right || ''),
+      undefined,
+      { numeric: true, sensitivity: 'base' }
+    );
+    return sortAscending ? comparison : -comparison;
+  };
+  const sortValues = {
+    birth: queen => [queen.Geburtsjahr, queen.ID],
+    id: queen => [queen.ID],
+    location: queen => [queen.Standort, queen.Hive_nr]
+  };
+  const sortQueens = (key, sortAscending) => [...queens].sort((left, right) => {
+    const leftValues = sortValues[key](left);
+    const rightValues = sortValues[key](right);
+    for (let index = 0; index < leftValues.length; index += 1) {
+      const comparison = compareValues(
+        leftValues[index],
+        rightValues[index],
+        sortAscending
+      );
+      if (comparison !== 0) return comparison;
+    }
+    return compareValues(left.ID, right.ID, true);
+  });
   let addQueenBtn = '';
   if (canEdit) {
     setTopbarActions([
@@ -347,9 +448,9 @@ async function renderQueens() {
     addQueenBtn = `<button type="button" class="btn" data-navigate="#/login?next=${encodeURIComponent('#/queen/new')}">Sign in to add</button>`;
   }
 
-  const rows = data.queens.map(q => `
+  const renderQueenRows = queenRows => queenRows.map(q => `
     <tr class="${queenYearClass(q.Geburtsjahr)}" role="button" tabindex="0" data-navigate="#/queen/${encodeURIComponent(q.ID)}">
-      <td>
+      <td colspan="3">
         <div class="vstack stack-tight">
           <div class="qline">
             <div class="qleft">${joinParts([
@@ -375,24 +476,35 @@ async function renderQueens() {
     </tr>
   `).join('');
 
-  app.innerHTML = `
-    <section class="card">
+  app.innerHTML = card('Queens', null, `
+    ${addQueenBtn ? `<div class="hstack">${addQueenBtn}</div>` : ''}
+    <table class="table queens-table">
       ${sortHeader}
-      ${addQueenBtn ? `<div class="hstack">${addQueenBtn}</div>` : ''}
-      <table class="table queens-table">
-        <thead><tr><th>Queen</th></tr></thead>
-        <tbody>${rows || `<tr><td class="muted">No queens found</td></tr>`}</tbody>
-      </table>
-    </section>
-  `;
+      <tbody id="queens-table-body">${renderQueenRows(sortQueens(activeSort, ascending)) || `<tr><td colspan="3" class="muted">No queens found</td></tr>`}</tbody>
+    </table>
+  `);
 
-  document.querySelectorAll('input[name="queen-sort"]').forEach(input => {
-    input.addEventListener('change', () => {
-      if (!input.checked) return;
-      const next = input.value === 'birth' ? '#/queens' : `#/queens?sort=${encodeURIComponent(input.value)}`;
-      location.hash = next;
+  const tableBody = document.getElementById('queens-table-body');
+  const sortButtons = [...app.querySelectorAll('[data-queen-sort]')];
+  const updateSortIndicators = () => {
+    sortButtons.forEach(sortButton => {
+      const isActive = sortButton.dataset.queenSort === activeSort;
+      sortButton.closest('th').setAttribute('aria-sort', isActive ? (ascending ? 'ascending' : 'descending') : 'none');
+      sortButton.classList.toggle('active', isActive);
+      sortButton.dataset.direction = isActive ? (ascending ? 'asc' : 'desc') : '';
+    });
+  };
+  sortButtons.forEach(button => {
+    button.addEventListener('click', () => {
+      const key = button.dataset.queenSort;
+      ascending = activeSort === key ? !ascending : sortOptions[key].defaultAscending;
+      activeSort = key;
+      tableBody.innerHTML = renderQueenRows(sortQueens(key, ascending))
+        || `<tr><td colspan="3" class="muted">No queens found</td></tr>`;
+      updateSortIndicators();
     });
   });
+  updateSortIndicators();
 }
 
 async function renderQueenEdit(queenId) {
@@ -543,7 +655,8 @@ async function renderStandortDetail(standort) {
   app.innerHTML = card(locationTitle, '', `<div class="skeleton"></div>`, 'title');
   const data = await apiGet({ action:'hives_by_standort', standort });
 
-  const rows = data.hives.map(h => `
+  const hives = data.hives || [];
+  const renderHiveRows = hiveRows => hiveRows.map(h => `
     <tr class="location-hive-primary" role="button" tabindex="0"
       data-navigate="#/hive/${h.Hive_ID}">
       <td>${joinEscaped([
@@ -570,20 +683,54 @@ async function renderStandortDetail(standort) {
     </tr>
   `).join('');
 
+  const compareHiveNumbers = (a, b) => String(a.Hive_nr || a.Hive_ID || '').localeCompare(
+    String(b.Hive_nr || b.Hive_ID || ''),
+    undefined,
+    { numeric: true, sensitivity: 'base' }
+  ) || Number(a.Hive_ID) - Number(b.Hive_ID);
+  const sortHives = sortByDate => [...hives].sort((a, b) => {
+    if (!sortByDate) return compareHiveNumbers(a, b);
+    const aDate = String(a.last_visit_date || '');
+    const bDate = String(b.last_visit_date || '');
+    if (!aDate && bDate) return 1;
+    if (aDate && !bDate) return -1;
+    return aDate.localeCompare(bDate) || compareHiveNumbers(a, b);
+  });
+
   app.innerHTML = `
     ${card(locationTitle, '', `
       <table class="table location-hives-table">
-        <tbody>${rows || `<tr><td class="muted">No hives found</td></tr>`}</tbody>
+        <tbody id="location-hives-body">${renderHiveRows(sortHives(false)) || `<tr><td class="muted">No hives found</td></tr>`}</tbody>
       </table>
     `, 'title')}
   `;
+
+  const hivesBody = document.getElementById('location-hives-body');
+  let sortByDate = false;
+  const installSortAction = () => {
+    setTopbarActions([{
+      label: sortByDate ? 'Sort by Hive-Nr' : 'Sort by date',
+      alignLeft: true,
+      onClick: () => {
+        sortByDate = !sortByDate;
+        hivesBody.innerHTML = renderHiveRows(sortHives(sortByDate))
+          || `<tr><td class="muted">No hives found</td></tr>`;
+        installSortAction();
+      }
+    }]);
+  };
+  installSortAction();
 }
 
 async function renderHive(hiveId) {
-  setActiveTab('/hive');
-  setTopbarBack(() => history.back());
+  setActiveTab('/standort');
   app.innerHTML = card('Hive', `#${hiveId}`, `<div class="skeleton"></div>`);
   const data = await apiGet({ action:'visits_by_hive', hive_id: hiveId });
+  const latestVisit = data.visits && data.visits.length ? data.visits[0] : null;
+  const standort = latestVisit?.Standort || '—';
+  setTopbarLocation(() => {
+    location.hash = `#/standort/${encodeURIComponent(standort)}`;
+  }, standort);
   const canEdit = canWrite();
   if (canEdit) {
     setTopbarActions([
@@ -602,7 +749,6 @@ async function renderHive(hiveId) {
     `);
 
   const hiveTitle = data.hive?.Hive_nr ? `Hive Nr. ${data.hive.Hive_nr}` : `Hive ID: #${hiveId}`;
-  const latestVisit = data.visits && data.visits.length ? data.visits[0] : null;
   const queenSummary = latestVisit
     ? joinValues([latestVisit.queen_breed, latestVisit.queen_marked, latestVisit.queen_birth_year], ' ')
     : '';
@@ -807,7 +953,7 @@ async function renderVisit(visitId) {
     app.innerHTML = authGateHtml({ title: 'Visit', subtitle: `#${visitId}` });
     return;
   }
-  setTopbarBack(() => history.back());
+  setTopbarBack(null);
   const writable = canWrite();
   app.innerHTML = card('Visit', `#${visitId}`, `<div class="skeleton"></div>`);
   const [visitRes, queensRes] = await Promise.all([
@@ -817,6 +963,13 @@ async function renderVisit(visitId) {
 
   const v = visitRes.visit;
   const hiveId = v.Hive_ID;
+  const standort = v.Standort || '—';
+  setTopbarBack(() => {
+    location.hash = `#/hive/${encodeURIComponent(hiveId)}`;
+  });
+  setTopbarLocation(() => {
+    location.hash = `#/standort/${encodeURIComponent(standort)}`;
+  }, standort);
   const queens = queensRes.queens || [];
 
   app.innerHTML = card('Visit', `Hive #${hiveId} · ${fmtDate(v.Datum)} · Visit #${visitId}`, `
@@ -1403,6 +1556,7 @@ async function router() {
   const parts = r.parts; // e.g., ['standort','Foo'] etc.
   const path = '/' + (parts[0] || '');
   setTopbarBack(null);
+  setTopbarLocation(null);
   setTopbarActions([]);
 
   if (!authState.user && path !== '/login') {

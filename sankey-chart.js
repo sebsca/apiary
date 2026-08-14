@@ -4,7 +4,8 @@ export function renderSankeyChart(container, data) {
   const links = data.links || [];
   const nodes = data.nodes || [];
   const columnLabels = data.columns || [];
-  const height = Math.max(420, nodes.length * 44, links.length * 28);
+  const plotTop = 120;
+  const height = Math.max(420, nodes.length * 44, links.length * 28) + (plotTop - 48);
   const baseNodeCount = nodes.length;
   const dummyNodes = columnLabels.map((_, column) => ({
     name: '',
@@ -34,7 +35,7 @@ export function renderSankeyChart(container, data) {
       }
       return String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' });
     })
-    .extent([[1, 48], [width - 1, height - 8]])(graph);
+    .extent([[1, plotTop], [width - 1, height - 8]])(graph);
 
   const svg = d3.select(container)
     .append('svg')
@@ -93,8 +94,7 @@ export function renderSankeyChart(container, data) {
     .selectAll('text')
     .data(columnLabels)
     .join('text')
-    .attr('x', (_, index) => columnXs[index])
-    .attr('y', 22)
-    .attr('text-anchor', 'middle')
+    .attr('transform', (_, index) => `translate(${columnXs[index]}, ${plotTop - 10}) rotate(-90)`)
+    .attr('text-anchor', 'start')
     .text((label) => label);
 }

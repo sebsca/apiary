@@ -50,7 +50,7 @@ a:hover{text-decoration:underline}
   position:sticky; top:0; z-index:10;
   display:flex; align-items:center;
   gap:12px;
-  flex-wrap:nowrap;
+  flex-wrap:wrap;
   padding:14px 5px;
   background: var(--topbar-bg);
   backdrop-filter: blur(10px);
@@ -61,17 +61,19 @@ a:hover{text-decoration:underline}
   display:flex;
   align-items:center;
   gap:6px;
-  flex-wrap:nowrap;
+  flex-wrap:wrap;
   white-space:nowrap;
 }
-.topbar-right{
+.topbar-toolbar{
   display:flex;
   align-items:center;
   gap:8px;
+  flex:1 0 100%;
   flex-wrap:nowrap;
   justify-content:flex-end;
-  margin-left:auto;
   order:30;
+  width:100%;
+  min-width:0;
 }
 .topbar-actions{
   display:flex;
@@ -79,11 +81,10 @@ a:hover{text-decoration:underline}
   gap:8px;
   flex-wrap:nowrap;
   justify-content:flex-end;
-  margin-left:auto;
-  order:25;
 }
-.topbar-actions:not([hidden]) ~ .topbar-right{
-  margin-left:0;
+.topbar-actions.align-left{
+  margin-right:auto;
+  order:-1;
 }
 .topbar-actions .btn{width:auto}
 .topbar-actions[hidden]{
@@ -91,8 +92,14 @@ a:hover{text-decoration:underline}
 }
 .topbar-controls{
   display:flex;
+  flex:1 1 auto;
   align-items:center;
   gap:8px;
+  justify-content:flex-end;
+}
+.topbar-location{
+  margin-right:auto;
+  order:-1;
 }
 .topbar-back{
   padding:8px 10px;
@@ -198,7 +205,7 @@ a:hover{text-decoration:underline}
   background: var(--card);
   border:1px solid var(--border);
   border-radius:12px;
-  padding:20px;
+  padding: 6px;
   box-shadow: var(--card-shadow);
   transition: box-shadow 0.3s ease, transform 0.3s ease;
 }
@@ -302,6 +309,34 @@ a:hover{text-decoration:underline}
   font-weight:600; 
   text-align:left; 
   background:var(--table-head-bg);
+}
+.table-sort-button{
+  appearance:none;
+  width:100%;
+  padding:0;
+  border:0;
+  background:transparent;
+  color:inherit;
+  font:inherit;
+  font-weight:inherit;
+  text-align:left;
+  cursor:pointer;
+}
+.table-sort-button.align-right{
+  text-align:right;
+}
+.table-sort-button.active::after{
+  margin-left:5px;
+}
+.table-sort-button.active[data-direction="asc"]::after{
+  content:'\2191';
+}
+.table-sort-button.active[data-direction="desc"]::after{
+  content:'\2193';
+}
+.table-sort-button:focus-visible{
+  outline:2px solid var(--accent);
+  outline-offset:3px;
 }
 .table tr{transition: background-color 0.15s ease}
 .table tr:hover td{background:var(--table-row-hover-bg)}
@@ -521,29 +556,6 @@ fieldset.form:disabled{
   min-width:0;
   padding-inline:8px;
 }
-.queen-table-title{
-  display:block;
-  width:100%;
-}
-.queen-sort-field{
-  width:100%;
-  min-width:0;
-  margin:0;
-}
-.queen-sort-field .segmented-button{
-  display:flex;
-  width:100%;
-}
-.queen-sort-field .segmented-button label{
-  flex:1 1 0;
-}
-.queen-sort-field .segmented-button span{
-  min-width:0;
-  height:100%;
-  padding-inline:10px;
-  white-space:normal;
-  overflow-wrap:anywhere;
-}
 .segmented-button input:focus-visible + span{
   outline:2px solid var(--accent);
   outline-offset:-3px;
@@ -590,19 +602,31 @@ fieldset.form:disabled{
   .topbar{gap:10px}
   .tabs{display:flex; gap:6px}
   .tabs a{padding:8px 12px}
-  .card{padding:16px}
+  .card{padding: 6px}
 }
 
 @media (max-width: 720px){
-  .topbar{position:sticky; top:0; flex-wrap:wrap}
-  .brand{width:auto; flex:1 1 auto}
-  .topbar-right{margin-left:auto; max-width:100%; flex-wrap:wrap}
-  .topbar-actions{flex-wrap:wrap; order:40; width:100%; margin-left:auto}
+  .topbar{
+    position:sticky;
+    top:0;
+    display:grid;
+    grid-template-columns:auto minmax(0, 1fr);
+    gap:10px 12px;
+  }
+  .brand{width:auto; min-width:0}
+  .topbar-toolbar{
+    grid-column:1 / -1;
+    max-width:100%;
+    overflow-x:auto;
+    -webkit-overflow-scrolling:touch;
+  }
   .topbar-tabs{
-    width:auto;
+    grid-column:1 / -1;
+    width:100%;
     max-width:100%;
     flex-wrap:nowrap;
     overflow-x:auto;
+    -webkit-overflow-scrolling:touch;
   }
   .menu-panel{
     width:100%;
@@ -614,7 +638,7 @@ fieldset.form:disabled{
   .tabs{display:flex; gap:6px}
   .auth{width:100%; justify-content:space-between; flex-wrap:wrap}
   .auth .btn{width:auto}
-  .topbar-right .btn{width:auto}
+  .topbar-toolbar .btn{width:auto}
   .topbar-actions .btn{width:auto}
   .hstack{flex-direction:column; align-items:flex-start}
   .hstack > *{width:100%}
