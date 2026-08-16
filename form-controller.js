@@ -1,5 +1,19 @@
 import { normalizeFormData } from './ui-utils.js';
 
+function setFormStatus(message, state, text) {
+  if (!message) return;
+  message.dataset.state = state;
+  message.setAttribute('role', state === 'error' ? 'alert' : 'status');
+  message.textContent = text;
+}
+
+function setFormBusy(form, busy) {
+  form.setAttribute('aria-busy', busy ? 'true' : 'false');
+  form.querySelectorAll('button').forEach((button) => {
+    button.disabled = busy;
+  });
+}
+
 export function wireCrudForm({
   apiPost,
   formId,
@@ -24,34 +38,41 @@ export function wireCrudForm({
       if (!confirm(deleteConfirm)) {
         return;
       }
-      message.textContent = 'Deleting…';
+      setFormBusy(form, true);
+      setFormStatus(message, 'busy', 'Deleting…');
       try {
         await apiPost({ action: deleteAction, id }, {});
-        message.textContent = 'Deleted.';
+        setFormStatus(message, 'success', 'Deleted.');
         if (onDeleted) {
           onDeleted();
         }
       } catch (error) {
-        message.textContent = `Error: ${error.message}`;
+        setFormStatus(message, 'error', `Error: ${error.message}`);
+      } finally {
+        setFormBusy(form, false);
       }
     });
   }
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    message.textContent = 'Saving…';
-    const data = transform(Object.fromEntries(new FormData(form).entries()));
-    const action = mode === 'create' ? createAction : updateAction;
-    const params = mode === 'create' ? { action } : { action, id };
+    form.classList.add('was-validated');
+    setFormBusy(form, true);
+    setFormStatus(message, 'busy', 'Saving…');
 
     try {
+      const data = transform(Object.fromEntries(new FormData(form).entries()));
+      const action = mode === 'create' ? createAction : updateAction;
+      const params = mode === 'create' ? { action } : { action, id };
       const result = await apiPost(params, data);
-      message.textContent = mode === 'create' ? 'Created.' : 'Saved.';
+      setFormStatus(message, 'success', mode === 'create' ? 'Created.' : 'Saved.');
       if (onSaved) {
         onSaved(result);
       }
     } catch (error) {
-      message.textContent = `Error: ${error.message}`;
+      setFormStatus(message, 'error', `Error: ${error.message}`);
+    } finally {
+      setFormBusy(form, false);
     }
   });
 }

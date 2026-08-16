@@ -24,7 +24,8 @@ export function createApiClient({
   async function get(params, options = {}) {
     const response = await fetch(buildUrl(params), {
       headers: { Accept: 'application/json' },
-      credentials: 'same-origin'
+      credentials: 'same-origin',
+      signal: options.signal
     });
     return handleResponse(response, options);
   }

@@ -41,7 +41,15 @@ export function renderSankeyChart(container, data) {
     .append('svg')
     .attr('viewBox', `0 0 ${width} ${height}`)
     .attr('role', 'img')
-    .attr('aria-label', 'Hive movements between locations');
+    .attr('aria-labelledby', 'sankey-title sankey-description');
+
+  svg.append('title')
+    .attr('id', 'sankey-title')
+    .text('Hive movements between locations');
+
+  svg.append('desc')
+    .attr('id', 'sankey-description')
+    .text('Flow diagram of active hives moving between apiary locations during the current calendar year. A data table follows the chart.');
 
   svg.append('g')
     .attr('fill', 'none')
@@ -51,7 +59,7 @@ export function renderSankeyChart(container, data) {
     .attr('d', d3.sankeyLinkHorizontal())
     .attr('stroke', (link) => color(link.source.name))
     .attr('stroke-width', (link) => Math.max(1, link.width))
-    .attr('stroke-opacity', 0.34)
+    .attr('stroke-opacity', 0.5)
     .append('title')
     .text((link) =>
       `${link.date}: ${link.source.name} → ${link.target.name}: ${link.value}\nHive no.: ${link.hives || '—'}`

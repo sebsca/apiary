@@ -3,50 +3,58 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="theme-color" content="#f4f6f3"/>
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'self'"/>
   <title>Apiary Logbook</title>
   <link rel="stylesheet" href="styles.css"/>
 </head>
 <body>
+  <a class="skip-link" href="#app">Skip to main content</a>
   <header class="topbar">
-    <button id="menu-toggle" class="hamburger" aria-label="Open menu" aria-expanded="false" aria-controls="topbar-menu">
-      <span></span>
-      <span></span>
-      <span></span>
-    </button>
-    <div class="brand" role="button" tabindex="0" data-navigate="#/">Apiary Logbook</div>
-    <nav class="tabs topbar-tabs">
-      <a href="#/" id="tab-standorte">Locations</a>
-      <a href="#/hives" id="tab-hives">Hives</a>
-      <a href="#/movements" id="tab-movements">Movements</a>
-      <a href="#/queens" id="tab-queens">Queens</a>
-    </nav>
+    <div class="topbar-main">
+      <a class="brand" href="#/" data-navigate="#/" aria-label="Apiary Logbook home">
+        <span class="brand-mark" aria-hidden="true">A</span>
+        <span class="brand-name">Apiary <span>Logbook</span></span>
+      </a>
+      <nav class="tabs topbar-tabs" aria-label="Primary navigation">
+        <a href="#/" id="tab-standorte">Locations</a>
+        <a href="#/hives" id="tab-hives">Hives</a>
+        <a href="#/movements" id="tab-movements">Movements</a>
+        <a href="#/queens" id="tab-queens">Queens</a>
+      </nav>
+      <button id="menu-toggle" class="hamburger" type="button" aria-label="Open account menu" aria-expanded="false" aria-controls="topbar-menu">
+        <span class="hamburger-lines" aria-hidden="true">
+          <span></span>
+          <span></span>
+          <span></span>
+        </span>
+      </button>
+      <nav id="topbar-menu" class="menu-panel" aria-label="Account">
+        <div class="auth">
+          <span id="auth-status" class="auth-status">Checking...</span>
+          <button id="auth-admin" type="button" class="btn menu-action" hidden>User Administration</button>
+          <button id="auth-account" type="button" class="btn menu-action" hidden>Change password</button>
+          <button id="auth-action" type="button" class="btn menu-action">Log in</button>
+        </div>
+      </nav>
+    </div>
     <div id="topbar-toolbar" class="topbar-toolbar" hidden>
       <div class="topbar-controls">
-        <button id="topbar-back" class="btn topbar-back" hidden>Back</button>
-        <button id="topbar-location" class="btn topbar-location" hidden></button>
+        <button id="topbar-back" type="button" class="btn btn-quiet topbar-back" hidden>Back</button>
+        <button id="topbar-location" type="button" class="btn btn-quiet topbar-location" hidden></button>
       </div>
       <div id="topbar-actions" class="topbar-actions" hidden></div>
     </div>
-    <div id="topbar-menu" class="menu-panel">
-      <div class="auth">
-        <span id="auth-status" class="auth-status">Checking...</span>
-        <button id="auth-admin" class="btn" hidden>User Administration</button>
-        <button id="auth-account" class="btn" hidden>Change password</button>
-        <button id="auth-action" class="btn">Log in</button>
-      </div>
-    </div>
   </header>
 
-  <main id="app" class="container">
-    <div class="card">
-      <div class="skeleton"></div>
-    </div>
+  <main id="app" class="container" tabindex="-1">
+    <section class="card" aria-busy="true">
+      <div class="skeleton" role="status">
+        <span class="sr-only">Loading…</span>
+      </div>
+    </section>
   </main>
-
-  <footer class="footer">
-  </footer>
 
   <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"
           integrity="sha384-CjloA8y00+1SDAUkjs099PVfnY2KmDC2BZnws9kh8D/lX1s46w6EPhpXdqMfjK6i"

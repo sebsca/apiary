@@ -425,6 +425,7 @@ try {
              h.Hive_nr,
              l.Standort,
              l.Datum AS last_visit_date,
+             l.ToDo AS ToDo,
              q.ID AS queen_id,
              q.Rasse AS queen_breed,
              q.Geburtsjahr AS queen_birth_year
@@ -536,6 +537,9 @@ try {
 
   if ($action === 'visits_by_hive') {
     $hive_id = (int)require_param('hive_id');
+    $page_size = 20;
+    $offset = max(0, (int)($_GET['offset'] ?? 0));
+    $fetch_limit = $page_size + 1;
     $sql = "SELECT v.ID,
                    v.Datum,
                    v.Standort,
@@ -562,16 +566,25 @@ try {
             LEFT JOIN Queens q ON q.ID = v.Queen_ID
             WHERE v.Hive_ID = :hive_id
             ORDER BY v.Datum DESC, v.ID DESC
-            LIMIT 20";
+            LIMIT {$fetch_limit} OFFSET {$offset}";
     $stmt = $pdo->prepare($sql);
     $stmt->execute(['hive_id' => $hive_id]);
     $rows = $stmt->fetchAll();
+    $has_more = count($rows) > $page_size;
+    if ($has_more) {
+      array_pop($rows);
+    }
 
     $hive = $pdo->prepare("SELECT ID, Hive_nr, inactive FROM Hives WHERE ID = :id");
     $hive->execute(['id' => $hive_id]);
     $hive_row = $hive->fetch();
 
-    respond(['hive' => $hive_row, 'visits' => $rows]);
+    respond([
+      'hive' => $hive_row,
+      'visits' => $rows,
+      'has_more' => $has_more,
+      'next_offset' => $offset + count($rows)
+    ]);
   }
 
   if ($action === 'visit') {

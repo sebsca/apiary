@@ -26,17 +26,19 @@ export function parseRoute() {
 }
 
 export function card(title, subtitle, innerHtml, titleClass = '') {
-  const titleClassAttr = titleClass ? `title ${titleClass}` : 'title';
+  const titleClassAttr = ['title', titleClass]
+    .filter((className, index, classNames) => className && classNames.indexOf(className) === index)
+    .join(' ');
+  const describedBy = subtitle ? ' aria-describedby="page-subtitle"' : '';
   return `
-    <section class="card">
-      <div class="hstack">
-        <div class="vstack stack-tight">
-          <div class="${titleClassAttr}">${htmlesc(title)}</div>
-          ${subtitle ? `<div class="subtitle">${htmlesc(subtitle)}</div>` : ''}
-        </div>
+    <section class="card" aria-labelledby="page-title"${describedBy}>
+      <header class="card-header">
+        <h1 id="page-title" class="${titleClassAttr}" tabindex="-1">${htmlesc(title)}</h1>
+        ${subtitle ? `<p id="page-subtitle" class="subtitle">${htmlesc(subtitle)}</p>` : ''}
+      </header>
+      <div class="card-body">
+        ${innerHtml}
       </div>
-      <div class="spacer"></div>
-      ${innerHtml}
     </section>
   `;
 }

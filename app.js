@@ -23,10 +23,14 @@ const topbarBack = document.getElementById('topbar-back');
 const topbarLocation = document.getElementById('topbar-location');
 const menuToggle = document.getElementById('menu-toggle');
 const menuPanel = document.getElementById('topbar-menu');
+const skipLink = document.querySelector('.skip-link');
 
 const authState = { user: null, checked: false, csrf: null };
 let authReady = null;
-const { get: apiGet, post: apiPost } = createApiClient({
+let routeRenderToken = 0;
+let routeAbortController = null;
+const baseDocumentTitle = 'Apiary Logbook';
+const apiClient = createApiClient({
   getCsrfToken: () => authState.csrf,
   onUnauthorized: (shouldRedirect) => {
     setAuth(null);
@@ -35,12 +39,89 @@ const { get: apiGet, post: apiPost } = createApiClient({
     }
   }
 });
+const apiGet = (params, options = {}) => apiClient.get(params, {
+  ...options,
+  signal: options.signal ?? routeAbortController?.signal
+});
+const apiPost = apiClient.post;
+
+function loadingStateHtml(label = 'Loading…') {
+  return `
+    <div class="loading-state" role="status" aria-live="polite" aria-label="${htmlesc(label)}">
+      <div class="skeleton" aria-hidden="true"></div>
+    </div>
+  `;
+}
+
+function noticeHtml(message, state = 'info') {
+  const role = state === 'error' ? 'alert' : 'status';
+  const live = state === 'error' ? 'assertive' : 'polite';
+  return `<div class="notice" data-state="${htmlesc(state)}" role="${role}" aria-live="${live}">${htmlesc(message)}</div>`;
+}
+
+function emptyStateHtml(message) {
+  return `<div class="empty-state" role="status">${htmlesc(message)}</div>`;
+}
+
+function tableEmptyRow(message, columns) {
+  return `<tr class="table-empty-row"><td colspan="${columns}">${emptyStateHtml(message)}</td></tr>`;
+}
+
+function tableScrollHtml(label, tableHtml) {
+  return `
+    <div class="table-scroll" role="region" aria-label="${htmlesc(label)}" tabindex="0">
+      ${tableHtml}
+    </div>
+  `;
+}
+
+function formStatusHtml(id) {
+  return `<div id="${htmlesc(id)}" class="form-status" data-state="idle" role="status" aria-live="polite" aria-atomic="true" aria-busy="false"></div>`;
+}
+
+function setFormStatus(element, message, state = 'info') {
+  if (!element) return;
+  element.dataset.state = message ? state : 'idle';
+  element.setAttribute('role', state === 'error' ? 'alert' : 'status');
+  element.setAttribute('aria-live', state === 'error' ? 'assertive' : 'polite');
+  element.setAttribute('aria-busy', state === 'busy' ? 'true' : 'false');
+  element.textContent = message;
+}
+
+function setFormBusy(form, busy) {
+  form.setAttribute('aria-busy', busy ? 'true' : 'false');
+  form.querySelectorAll('button').forEach((button) => {
+    button.disabled = busy;
+  });
+}
+
+function finalizeRouteView(token) {
+  if (token !== routeRenderToken) return;
+  const heading = app.querySelector('.title');
+  const title = heading?.textContent?.trim() || baseDocumentTitle;
+  document.title = title === baseDocumentTitle ? baseDocumentTitle : `${title} · ${baseDocumentTitle}`;
+  app.setAttribute('aria-busy', 'false');
+  if (!heading) return;
+  if (!/^H[1-6]$/.test(heading.tagName)) {
+    heading.setAttribute('role', 'heading');
+    heading.setAttribute('aria-level', '1');
+  }
+  heading.setAttribute('tabindex', '-1');
+  requestAnimationFrame(() => {
+    if (token === routeRenderToken && document.contains(heading)) {
+      heading.focus({ preventScroll: true });
+    }
+  });
+}
 
 function setMenuOpen(open) {
   document.body.classList.toggle('menu-open', open);
   if (menuToggle) {
     menuToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-    menuToggle.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+    menuToggle.setAttribute('aria-label', open ? 'Close account menu' : 'Open account menu');
+  }
+  if (menuPanel) {
+    menuPanel.setAttribute('aria-hidden', open ? 'false' : 'true');
   }
 }
 
@@ -86,7 +167,6 @@ function setTopbarLocation(onClick = null, label = '') {
 function setTopbarActions(actions = []) {
   if (!topbarActions) return;
   topbarActions.innerHTML = '';
-  topbarActions.classList.toggle('align-left', !!actions?.some(action => action.alignLeft));
   if (!actions || actions.length === 0) {
     topbarActions.hidden = true;
     syncTopbarToolbar();
@@ -126,15 +206,39 @@ if (menuPanel) {
   });
 }
 
+if (skipLink) {
+  skipLink.addEventListener('click', (event) => {
+    event.preventDefault();
+    app.focus({ preventScroll: true });
+    app.scrollIntoView({ block: 'start' });
+  });
+}
+
+document.addEventListener('click', (event) => {
+  if (!document.body.classList.contains('menu-open')) return;
+  const target = event.target;
+  if (!(target instanceof Node)) return;
+  if (menuPanel?.contains(target) || menuToggle?.contains(target)) return;
+  setMenuOpen(false);
+});
+
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || !document.body.classList.contains('menu-open')) return;
+  setMenuOpen(false);
+  menuToggle?.focus();
+});
+
 window.addEventListener('hashchange', () => {
   setMenuOpen(false);
 });
 
 window.addEventListener('resize', () => {
-  if (window.innerWidth > 720) {
+  if (window.innerWidth >= 768) {
     setMenuOpen(false);
   }
 });
+
+setMenuOpen(false);
 
 function setAuth(user, csrfToken = null) {
   authState.user = user || null;
@@ -186,7 +290,7 @@ function updateAuthUi() {
       } finally {
         authAction.disabled = false;
         setAuth(null);
-        location.hash = '#/';
+        location.hash = '#/login?next=%23%2F';
       }
     };
   } else {
@@ -217,17 +321,27 @@ async function initAuth() {
 }
 
 function setActiveTab(path) {
-  tabStandorte.classList.toggle('active', path === '/' || path.startsWith('/standort') || path.startsWith('/visit'));
-  tabHives.classList.toggle('active', path.startsWith('/hive'));
-  tabMovements.classList.toggle('active', path.startsWith('/movements'));
-  tabQueens.classList.toggle('active', path.startsWith('/queens') || path.startsWith('/queen'));
+  const tabs = [
+    [tabStandorte, path === '/' || path.startsWith('/standort') || path.startsWith('/visit')],
+    [tabHives, path.startsWith('/hive')],
+    [tabMovements, path.startsWith('/movements')],
+    [tabQueens, path.startsWith('/queens') || path.startsWith('/queen')]
+  ];
+  tabs.forEach(([tab, active]) => {
+    if (!tab) return;
+    tab.classList.toggle('active', active);
+    if (active) {
+      tab.setAttribute('aria-current', 'page');
+    } else {
+      tab.removeAttribute('aria-current');
+    }
+  });
 }
 
 function authGateHtml({ title, subtitle }) {
   const next = encodeURIComponent(location.hash || '#/');
   return card(title, subtitle, `
-    <div class="notice">Please sign in to continue.</div>
-    <div class="spacer"></div>
+    ${noticeHtml('Please sign in to continue.', 'warning')}
     <div class="hstack">
       <button class="btn primary" data-navigate="#/login?next=${next}">Sign in</button>
     </div>
@@ -236,7 +350,7 @@ function authGateHtml({ title, subtitle }) {
 
 async function renderStandorte() {
   setActiveTab('/');
-  app.innerHTML = card('Locations', null, `<div class="skeleton"></div>`);
+  app.innerHTML = card('Locations', null, loadingStateHtml('Loading locations…'));
   const data = await apiGet({ action:'standorte' });
   const canEdit = canWrite();
   let addHiveBtn = '';
@@ -245,46 +359,63 @@ async function renderStandorte() {
       { label: 'Add Hive', primary: true, onClick: () => { location.hash = '#/hive/new'; } }
     ]);
   } else if (authState.user) {
-    addHiveBtn = `<button class="btn" disabled>Read-only</button>`;
+    setTopbarActions([{ label: 'Read-only', disabled: true }]);
   } else {
     addHiveBtn = `<button class="btn" data-navigate="#/login?next=${encodeURIComponent('#/hive/new')}">Sign in to add</button>`;
   }
 
-  const rows = data.standorte.map(r => `
-    <tr role="button" tabindex="0" data-navigate="#/standort/${encodeURIComponent(r.Standort)}">
-      <td>${htmlesc(r.Standort)}</td>
+  const rows = data.standorte.map(r => {
+    const route = `#/standort/${encodeURIComponent(r.Standort)}`;
+    return `
+    <tr data-navigate="${route}">
+      <th scope="row"><a class="table-record-link" href="${route}">${htmlesc(r.Standort)}</a></th>
       <td>${htmlesc(r.active_hives)}</td>
       <td>${r.todo_hives > 0 ? htmlesc(r.todo_hives) : ''}</td>
     </tr>
-  `).join('');
+  `;
+  }).join('');
 
   app.innerHTML = card('Locations', null, `
     <div class="hstack">
       ${addHiveBtn}
     </div>
-    <table class="table queen-table">
-      <thead><tr><th>Location</th><th>Active hives</th><th>Hives with to-do</th></tr></thead>
-      <tbody>${rows || `<tr><td colspan="3" class="muted">No data</td></tr>`}</tbody>
-    </table>
+    ${tableScrollHtml('Locations overview', `
+      <table class="table locations-table" aria-label="Locations overview">
+        <thead><tr><th scope="col">Location</th><th scope="col">Active hives</th><th scope="col">Hives with to-do</th></tr></thead>
+        <tbody>${rows || tableEmptyRow('No locations found.', 3)}</tbody>
+      </table>
+    `)}
   `);
 }
 
 async function renderHives() {
   setActiveTab('/hives');
-  app.innerHTML = card('Hives', null, `<div class="skeleton"></div>`);
+  app.innerHTML = card('Hives', null, loadingStateHtml('Loading hives…'));
   const data = await apiGet({ action:'hives' });
+
+  if (canWrite()) {
+    setTopbarActions([
+      { label: 'Add Hive', primary: true, onClick: () => { location.hash = '#/hive/new'; } }
+    ]);
+  } else {
+    setTopbarActions([{ label: 'Read-only', disabled: true }]);
+  }
 
   const hives = data.hives || [];
   const renderHiveRows = hiveRows => hiveRows.map(hive => {
     const queen = hive.queen_id
       ? `${htmlesc(hive.queen_id)} · ${htmlesc(hive.queen_breed || '—')} · ${htmlesc(hive.queen_birth_year || '—')}`
       : '—';
+    const route = `#/hive/${encodeURIComponent(hive.Hive_ID)}`;
     return `
-      <tr role="button" tabindex="0" data-navigate="#/hive/${encodeURIComponent(hive.Hive_ID)}">
-        <td>${htmlesc(hive.Hive_nr || '—')}</td>
+      <tr data-navigate="${route}">
+        <th scope="row"><a class="table-record-link" href="${route}" aria-label="Open hive ${htmlesc(hive.Hive_nr || hive.Hive_ID)}">${htmlesc(hive.Hive_nr || '—')}</a></th>
         <td>${htmlesc(hive.Standort || '—')}</td>
         <td>${htmlesc(fmtDate(hive.last_visit_date))}</td>
         <td>${queen}</td>
+        <td>${hive.ToDo
+          ? `<span class="hives-current-todo">${htmlesc(hive.ToDo)}</span>`
+          : '<span class="muted">—</span>'}</td>
       </tr>
     `;
   }).join('');
@@ -295,7 +426,8 @@ async function renderHives() {
     date: hive => hive.last_visit_date,
     queen: hive => hive.queen_id
       ? `${hive.queen_id} ${hive.queen_breed || ''} ${hive.queen_birth_year || ''}`
-      : null
+      : null,
+    todo: hive => hive.ToDo
   };
   const compareValues = (left, right, ascending) => {
     const leftEmpty = left === null || left === undefined || left === '';
@@ -313,19 +445,20 @@ async function renderHives() {
       || compareValues(a.Hive_ID, b.Hive_ID, true)
   ));
 
-  app.innerHTML = card('Hives', null, `
-    <table class="table">
+  app.innerHTML = card('Hives', null, tableScrollHtml('Active hives', `
+    <table class="table hives-table" aria-label="Active hives">
       <thead>
         <tr>
-          <th><button type="button" class="table-sort-button" data-hive-sort="hive">Hive_Nr</button></th>
-          <th><button type="button" class="table-sort-button" data-hive-sort="location">Location</button></th>
-          <th><button type="button" class="table-sort-button" data-hive-sort="date">Last visit</button></th>
-          <th><button type="button" class="table-sort-button" data-hive-sort="queen">Queen (ID · Breed · Birth year)</button></th>
+          <th scope="col"><button type="button" class="table-sort-button" data-hive-sort="hive">Hive_Nr</button></th>
+          <th scope="col"><button type="button" class="table-sort-button" data-hive-sort="location">Location</button></th>
+          <th scope="col"><button type="button" class="table-sort-button" data-hive-sort="date">Last visit</button></th>
+          <th scope="col"><button type="button" class="table-sort-button" data-hive-sort="queen">Queen (ID · Breed · Birth year)</button></th>
+          <th scope="col"><button type="button" class="table-sort-button" data-hive-sort="todo">To-Do</button></th>
         </tr>
       </thead>
-      <tbody id="hives-table-body">${renderHiveRows(sortHives('hive', true)) || `<tr><td colspan="4" class="muted">No active hives found.</td></tr>`}</tbody>
+      <tbody id="hives-table-body">${renderHiveRows(sortHives('hive', true)) || tableEmptyRow('No active hives found.', 5)}</tbody>
     </table>
-  `);
+  `));
 
   const tableBody = document.getElementById('hives-table-body');
   const sortButtons = [...app.querySelectorAll('[data-hive-sort]')];
@@ -345,7 +478,7 @@ async function renderHives() {
       ascending = activeSort === key ? !ascending : true;
       activeSort = key;
       tableBody.innerHTML = renderHiveRows(sortHives(key, ascending))
-        || `<tr><td colspan="4" class="muted">No active hives found.</td></tr>`;
+        || tableEmptyRow('No active hives found.', 5);
       updateSortIndicators();
     });
   });
@@ -354,21 +487,51 @@ async function renderHives() {
 
 async function renderHiveMovements() {
   setActiveTab('/movements');
-  app.innerHTML = card('Hive Movements', null, `<div class="skeleton"></div>`);
+  app.innerHTML = card('Hive Movements', null, loadingStateHtml('Loading hive movements…'));
   const data = await apiGet({ action:'hive_movements' });
 
-  if (!window.d3 || !window.d3.sankey || !window.d3.sankeyLinkHorizontal) {
-    app.innerHTML = card('Hive Movements', null, `<div class="notice">Sankey library unavailable.</div>`);
-    return;
-  }
-
   if ((!data.nodes || data.nodes.length === 0) && (!data.links || data.links.length === 0)) {
-    app.innerHTML = card('Hive Movements', null, `<div class="notice">No hive movements found.</div>`);
+    app.innerHTML = card('Hive Movements', null, emptyStateHtml('No hive movements found.'));
     return;
   }
 
-  app.innerHTML = card('Hive Movements', null, `<div id="sankey-chart" class="sankey-chart"></div>`);
-  renderSankeyChart(document.getElementById('sankey-chart'), data);
+  const nodes = data.nodes || [];
+  const chartAvailable = !!(window.d3 && window.d3.sankey && window.d3.sankeyLinkHorizontal);
+  const nodeName = (reference) => {
+    if (reference && typeof reference === 'object') return reference.name || '—';
+    return nodes[Number(reference)]?.name || '—';
+  };
+  const movementRows = (data.links || []).map(link => `
+    <tr>
+      <td>${htmlesc(fmtDate(link.date))}</td>
+      <td>${htmlesc(nodeName(link.source))} <span aria-hidden="true">→</span><span class="sr-only"> to </span> ${htmlesc(nodeName(link.target))}</td>
+      <td>${htmlesc(link.value ?? 0)}</td>
+      <td>${htmlesc(link.hives || link.hive_ids || '—')}</td>
+    </tr>
+  `).join('');
+
+  app.innerHTML = card('Hive Movements', null, `
+    ${chartAvailable
+      ? '<div id="sankey-chart" class="sankey-chart" role="region" aria-label="Hive movement flow diagram" tabindex="0"></div>'
+      : noticeHtml('The flow diagram is unavailable. Movement data remains available below.', 'warning')}
+    <h2 class="section-title">Movement overview</h2>
+    ${tableScrollHtml('Hive movement details', `
+      <table class="table movements-table" aria-label="Hive movement details">
+        <thead>
+          <tr>
+            <th scope="col">Date</th>
+            <th scope="col">Movement</th>
+            <th scope="col">Count</th>
+            <th scope="col">Hives</th>
+          </tr>
+        </thead>
+        <tbody>${movementRows || tableEmptyRow('No movement flows found.', 4)}</tbody>
+      </table>
+    `)}
+  `);
+  if (chartAvailable) {
+    renderSankeyChart(document.getElementById('sankey-chart'), data);
+  }
 }
 
 async function renderQueens() {
@@ -384,18 +547,18 @@ async function renderQueens() {
     <thead>
       <tr>
         ${Object.entries(sortOptions).map(([value, option]) => `
-          <th><button type="button" class="table-sort-button${option.alignRight ? ' align-right' : ''}" data-queen-sort="${htmlesc(value)}">${htmlesc(option.label)}</button></th>
+          <th scope="col"><button type="button" class="table-sort-button${option.alignRight ? ' align-right' : ''}" data-queen-sort="${htmlesc(value)}" aria-label="Sort queens by ${htmlesc(option.label)}">${htmlesc(option.label)}</button></th>
         `).join('')}
       </tr>
     </thead>
   `;
 
-  app.innerHTML = card('Queens', null, `
-    <table class="table queens-table">
+  app.innerHTML = card('Queens', null, tableScrollHtml('Queens', `
+    <table class="table queens-table" aria-label="Queens">
       ${sortHeader}
-      <tbody><tr><td colspan="3"><div class="skeleton"></div></td></tr></tbody>
+      <tbody><tr><td colspan="3">${loadingStateHtml('Loading queens…')}</td></tr></tbody>
     </table>
-  `);
+  `));
   const data = await apiGet({ action:'queens' });
   const queens = data.queens || [];
   const canEdit = canWrite();
@@ -410,8 +573,8 @@ async function renderQueens() {
     const leftEmpty = left === null || left === undefined || left === '';
     const rightEmpty = right === null || right === undefined || right === '';
     if (leftEmpty !== rightEmpty) return leftEmpty ? 1 : -1;
-    const comparison = String(left || '').localeCompare(
-      String(right || ''),
+    const comparison = String(left ?? '').localeCompare(
+      String(right ?? ''),
       undefined,
       { numeric: true, sensitivity: 'base' }
     );
@@ -423,8 +586,9 @@ async function renderQueens() {
     location: queen => [queen.Standort, queen.Hive_nr]
   };
   const sortQueens = (key, sortAscending) => [...queens].sort((left, right) => {
-    const leftValues = sortValues[key](left);
-    const rightValues = sortValues[key](right);
+    const valueGetter = sortValues[key] || sortValues.birth;
+    const leftValues = valueGetter(left);
+    const rightValues = valueGetter(right);
     for (let index = 0; index < leftValues.length; index += 1) {
       const comparison = compareValues(
         leftValues[index],
@@ -448,13 +612,15 @@ async function renderQueens() {
     addQueenBtn = `<button type="button" class="btn" data-navigate="#/login?next=${encodeURIComponent('#/queen/new')}">Sign in to add</button>`;
   }
 
-  const renderQueenRows = queenRows => queenRows.map(q => `
-    <tr class="${queenYearClass(q.Geburtsjahr)}" role="button" tabindex="0" data-navigate="#/queen/${encodeURIComponent(q.ID)}">
+  const renderQueenRows = queenRows => queenRows.map(q => {
+    const route = `#/queen/${encodeURIComponent(q.ID)}`;
+    return `
+    <tr class="${queenYearClass(q.Geburtsjahr)}" data-navigate="${route}">
       <td colspan="3">
         <div class="vstack stack-tight">
           <div class="qline">
             <div class="qleft">${joinParts([
-              strong(q.ID),
+              `<a class="table-record-link" href="${route}" aria-label="Open queen ${htmlesc(q.ID)}"><strong>${htmlesc(q.ID)}</strong></a>`,
               htmlesc(q.Rasse || ''),
               htmlesc(q.gezeichnet || ''),
               htmlesc(q.Lebensnummer || ''),
@@ -474,14 +640,17 @@ async function renderQueens() {
         </div>
       </td>
     </tr>
-  `).join('');
+  `;
+  }).join('');
 
   app.innerHTML = card('Queens', null, `
     ${addQueenBtn ? `<div class="hstack">${addQueenBtn}</div>` : ''}
-    <table class="table queens-table">
-      ${sortHeader}
-      <tbody id="queens-table-body">${renderQueenRows(sortQueens(activeSort, ascending)) || `<tr><td colspan="3" class="muted">No queens found</td></tr>`}</tbody>
-    </table>
+    ${tableScrollHtml('Queens', `
+      <table class="table queens-table" aria-label="Queens">
+        ${sortHeader}
+        <tbody id="queens-table-body">${renderQueenRows(sortQueens(activeSort, ascending)) || tableEmptyRow('No queens found.', 3)}</tbody>
+      </table>
+    `)}
   `);
 
   const tableBody = document.getElementById('queens-table-body');
@@ -492,15 +661,19 @@ async function renderQueens() {
       sortButton.closest('th').setAttribute('aria-sort', isActive ? (ascending ? 'ascending' : 'descending') : 'none');
       sortButton.classList.toggle('active', isActive);
       sortButton.dataset.direction = isActive ? (ascending ? 'asc' : 'desc') : '';
+      const option = sortOptions[sortButton.dataset.queenSort];
+      const direction = isActive ? `, currently ${ascending ? 'ascending' : 'descending'}` : '';
+      sortButton.setAttribute('aria-label', `Sort queens by ${option.label}${direction}`);
     });
   };
   sortButtons.forEach(button => {
     button.addEventListener('click', () => {
-      const key = button.dataset.queenSort;
+      const requestedKey = button.dataset.queenSort;
+      const key = Object.prototype.hasOwnProperty.call(sortOptions, requestedKey) ? requestedKey : 'birth';
       ascending = activeSort === key ? !ascending : sortOptions[key].defaultAscending;
       activeSort = key;
       tableBody.innerHTML = renderQueenRows(sortQueens(key, ascending))
-        || `<tr><td colspan="3" class="muted">No queens found</td></tr>`;
+        || tableEmptyRow('No queens found.', 3);
       updateSortIndicators();
     });
   });
@@ -516,20 +689,21 @@ async function renderQueenEdit(queenId) {
   }
   setTopbarBack(() => history.back());
   const writable = canWrite();
-  app.innerHTML = card('Queen', `#${queenId}`, `<div class="skeleton"></div>`);
+  app.innerHTML = card('Queen', `#${queenId}`, loadingStateHtml('Loading queen…'));
   try {
     const data = await apiGet({ action:'queen', id: queenId });
     const q = data.queen;
 
     app.innerHTML = card('Queen', `Edit #${q.ID}`, `
-      ${!writable ? `<div class="notice">Read-only access.</div><div class="spacer"></div>` : ''}
+      ${!writable ? noticeHtml('Read-only access.', 'info') : ''}
       ${queenFormHtml({ q, mode:'update', readOnly: !writable })}
     `);
 
     if (writable) wireQueenForm({ queenId: q.ID, mode:'update' });
   } catch (err) {
+    if (err?.name === 'AbortError') throw err;
     app.innerHTML = card('Queen', `#${queenId}`, `
-      <div class="notice">Error loading queen: ${htmlesc(err.message)}</div>
+      ${noticeHtml(`Error loading queen: ${err.message}`, 'error')}
     `);
   }
 }
@@ -539,14 +713,14 @@ async function renderQueenCreate() {
   if (!authState.user || !canWrite()) {
     setTopbarBack(() => history.back());
     app.innerHTML = card('Queen', 'New', `
-      <div class="notice">Write access required to create queens.</div>
+      ${noticeHtml('Write access required to create queens.', 'warning')}
     `);
     return;
   }
   setTopbarBack(() => {
     location.hash = '#/queens';
   });
-  app.innerHTML = card('Queen', 'New', `<div class="skeleton"></div>`);
+  app.innerHTML = card('Queen', 'New', loadingStateHtml('Preparing queen form…'));
 
   const q = {
     Lebensnummer: null,
@@ -575,45 +749,45 @@ function queenFormHtml({ q, mode='update', readOnly=false }) {
 
   return `
   <form id="queen-form" class="vstack">
-    <fieldset class="form single" ${readOnly ? 'disabled' : ''}>
+    <fieldset class="form form-grid" ${readOnly ? 'disabled' : ''}>
       <div class="field">
-        <label>Life no.</label>
-        <input name="Lebensnummer" value="${htmlesc(q.Lebensnummer || '')}" placeholder="e.g., 24-178-003"/>
+        <label for="queen-life-number">Life no.</label>
+        <input id="queen-life-number" name="Lebensnummer" value="${htmlesc(q.Lebensnummer || '')}" placeholder="e.g., 24-178-003"/>
       </div>
 
       <div class="field">
-        <label>Birth year</label>
-        <input name="Geburtsjahr" value="${htmlesc(q.Geburtsjahr || '')}" placeholder="e.g., 2024"/>
+        <label for="queen-birth-year">Birth year</label>
+        <input id="queen-birth-year" name="Geburtsjahr" type="number" min="1900" max="2100" step="1" value="${htmlesc(q.Geburtsjahr || '')}" placeholder="e.g., 2024" inputmode="numeric" required/>
       </div>
 
       <div class="field">
-        <label>Marked</label>
-        <input name="gezeichnet" value="${htmlesc(q.gezeichnet || '')}" placeholder="e.g., yellow / unmarked"/>
+        <label for="queen-marked">Marked</label>
+        <input id="queen-marked" name="gezeichnet" value="${htmlesc(q.gezeichnet || '')}" placeholder="e.g., yellow / unmarked"/>
       </div>
 
       <div class="field">
-        <label>Breed</label>
-        <input name="Rasse" value="${htmlesc(q.Rasse || '')}" placeholder="e.g., Carnica"/>
+        <label for="queen-breed">Breed</label>
+        <input id="queen-breed" name="Rasse" value="${htmlesc(q.Rasse || '')}" placeholder="e.g., Carnica"/>
       </div>
 
       <div class="field">
-        <label>Breeder</label>
-        <input name="Zuechter" value="${htmlesc(q.Zuechter || '')}" placeholder="Breeder name"/>
+        <label for="queen-breeder">Breeder</label>
+        <input id="queen-breeder" name="Zuechter" value="${htmlesc(q.Zuechter || '')}" placeholder="Breeder name"/>
       </div>
 
       <div class="field">
-        <label>Mother (life no.)</label>
-        <input name="LN_Mutter" value="${htmlesc(q.LN_Mutter || '')}" placeholder="Life no. of mother"/>
+        <label for="queen-mother">Mother (life no.)</label>
+        <input id="queen-mother" name="LN_Mutter" value="${htmlesc(q.LN_Mutter || '')}" placeholder="Life no. of mother"/>
       </div>
 
       <div class="field">
-        <label>Mother of father (life no.)</label>
-        <input name="LN_Vatermutter" value="${htmlesc(q.LN_Vatermutter || '')}" placeholder="Life no. of father's mother"/>
+        <label for="queen-father-mother">Mother of father (life no.)</label>
+        <input id="queen-father-mother" name="LN_Vatermutter" value="${htmlesc(q.LN_Vatermutter || '')}" placeholder="Life no. of father's mother"/>
       </div>
 
       <div class="field">
-        <label>Mating station</label>
-        <input name="Belegstelle" value="${htmlesc(q.Belegstelle || '')}" placeholder="Belegstelle"/>
+        <label for="queen-mating-station">Mating station</label>
+        <input id="queen-mating-station" name="Belegstelle" value="${htmlesc(q.Belegstelle || '')}" placeholder="Belegstelle"/>
       </div>
     </fieldset>
 
@@ -625,7 +799,7 @@ function queenFormHtml({ q, mode='update', readOnly=false }) {
       </div>
     </div>
 
-    <div id="queen-form-msg" class="muted" aria-live="polite"></div>
+    ${formStatusHtml('queen-form-msg')}
   </form>`;
 }
 
@@ -652,81 +826,172 @@ async function renderStandortDetail(standort) {
     location.hash = '#/';
   });
   const locationTitle = `Hives at Location ${standort}`;
-  app.innerHTML = card(locationTitle, '', `<div class="skeleton"></div>`, 'title');
+  app.innerHTML = card(locationTitle, '', loadingStateHtml('Loading hives at this location…'), 'title');
   const data = await apiGet({ action:'hives_by_standort', standort });
 
   const hives = data.hives || [];
-  const renderHiveRows = hiveRows => hiveRows.map(h => `
-    <tr class="location-hive-primary" role="button" tabindex="0"
-      data-navigate="#/hive/${h.Hive_ID}">
-      <td>${joinEscaped([
-        h.Hive_nr || h.Hive_ID,
-        h.last_visit_date ? fmtDate(h.last_visit_date) : '',
-        'Q:',
-        h.queen_birth_year,
-        h.queen_marked,
-        h.queen_breed
-      ])}</td>
-    </tr>
-    <tr class="location-hive-secondary" role="button" tabindex="0"
-      data-navigate="#/hive/${h.Hive_ID}">
-      <td>
-        <div class="location-hive-secondary-line">
-          <span>${joinEscaped([h.Volksstaerke, h.Aufbau, h.Schwarmneigung])}</span>
-          <span class="location-hive-todo">${htmlesc(h.ToDo || '')}</span>
+  const renderHiveRows = hiveRows => hiveRows.map(h => {
+    const route = `#/hive/${encodeURIComponent(h.Hive_ID)}`;
+    const hiveNumber = h.Hive_nr || h.Hive_ID || '—';
+    const queenDetails = joinEscaped([
+      h.queen_birth_year,
+      h.queen_marked,
+      h.queen_breed
+    ], ' · ');
+    return `
+    <tr class="location-hive-row" data-navigate="${route}">
+      <th class="location-hive-key-cell" scope="row">
+        <a class="location-hive-number-link" href="${route}" aria-label="Open hive ${htmlesc(hiveNumber)}">
+          <span class="location-hive-number">${htmlesc(hiveNumber)}</span>
+        </a>
+      </th>
+      <td class="location-hive-comparison-cell">
+        <div class="location-hive-grid">
+          <div class="location-hive-slot location-hive-slot-visit">
+            <span class="location-hive-slot-label sr-only">Latest inspection</span>
+            ${h.last_visit_date
+              ? `<time datetime="${htmlesc(h.last_visit_date)}">${htmlesc(fmtDate(h.last_visit_date))}</time>`
+              : '<span class="location-hive-empty">—</span>'}
+          </div>
+
+          <div class="location-hive-slot location-hive-slot-queen">
+            <span class="location-hive-slot-label sr-only">Queen</span>
+            <span>
+              ${h.Queen_ID
+                ? `<span>Q ${htmlesc(h.Queen_ID)}</span>${queenDetails ? `<span class="location-hive-queen-details"> · ${queenDetails}</span>` : ''}`
+                : (queenDetails || '<span class="location-hive-empty">—</span>')}
+            </span>
+          </div>
+
+          <dl class="location-hive-metrics">
+            <div>
+              <dt class="sr-only">Strength</dt>
+              <dd>${htmlesc(h.Volksstaerke || '—')}</dd>
+            </div>
+            <div>
+              <dt class="sr-only">Setup</dt>
+              <dd class="location-hive-setup-value">${htmlesc(h.Aufbau || '—')}</dd>
+            </div>
+          </dl>
+
+          <div class="location-hive-record-text">
+            <div class="location-hive-slot muted">
+              <span class="location-hive-slot-label sr-only">Notes</span>
+              ${h.Bemerkungen
+                ? `<span class="location-hive-clamp">${htmlesc(h.Bemerkungen)}</span>`
+                : '<span class="location-hive-empty">—</span>'}
+            </div>
+            <div class="location-hive-slot location-hive-slot-todo">
+              <span class="location-hive-slot-label sr-only">To-do</span>
+              ${h.ToDo
+                ? `<strong class="location-hive-clamp">${htmlesc(h.ToDo)}</strong>`
+                : '<span class="location-hive-empty">—</span>'}
+            </div>
+          </div>
         </div>
       </td>
     </tr>
-    <tr class="location-hive-remarks" role="button" tabindex="0"
-      data-navigate="#/hive/${h.Hive_ID}">
-      <td>${htmlesc(h.Bemerkungen || '')}</td>
-    </tr>
-  `).join('');
+  `;
+  }).join('');
 
   const compareHiveNumbers = (a, b) => String(a.Hive_nr || a.Hive_ID || '').localeCompare(
     String(b.Hive_nr || b.Hive_ID || ''),
     undefined,
     { numeric: true, sensitivity: 'base' }
   ) || Number(a.Hive_ID) - Number(b.Hive_ID);
-  const sortHives = sortByDate => [...hives].sort((a, b) => {
-    if (!sortByDate) return compareHiveNumbers(a, b);
+  const compareDates = (a, b, sortAscending) => {
     const aDate = String(a.last_visit_date || '');
     const bDate = String(b.last_visit_date || '');
     if (!aDate && bDate) return 1;
     if (aDate && !bDate) return -1;
-    return aDate.localeCompare(bDate) || compareHiveNumbers(a, b);
+    const comparison = aDate.localeCompare(bDate);
+    return sortAscending ? comparison : -comparison;
+  };
+  const sortHives = (key, sortAscending) => [...hives].sort((a, b) => {
+    if (key === 'date') {
+      return compareDates(a, b, sortAscending) || compareHiveNumbers(a, b);
+    }
+    const comparison = compareHiveNumbers(a, b);
+    return sortAscending ? comparison : -comparison;
   });
+  let activeSort = 'hive';
+  let ascending = true;
 
   app.innerHTML = `
     ${card(locationTitle, '', `
-      <table class="table location-hives-table">
-        <tbody id="location-hives-body">${renderHiveRows(sortHives(false)) || `<tr><td class="muted">No hives found</td></tr>`}</tbody>
-      </table>
+      ${tableScrollHtml(`Hives at location ${standort}`, `
+        <table class="table location-hives-table" aria-label="Hives at location ${htmlesc(standort)}">
+          <colgroup><col class="location-hive-key-column"/><col/></colgroup>
+          <thead>
+            <tr>
+              <th scope="col">
+                <button type="button" class="table-sort-button record-sort-button" data-location-hive-sort="hive">Hive no.</button>
+              </th>
+              <th scope="col" aria-label="Latest inspection and hive details">
+                <div class="location-hive-grid location-hive-header-grid">
+                  <div class="location-hive-slot location-hive-slot-visit">
+                    <button type="button" class="table-sort-button record-sort-button" data-location-hive-sort="date">Latest inspection</button>
+                  </div>
+                  <div class="location-hive-slot location-hive-slot-queen">
+                    <span class="location-hive-header-label" aria-hidden="true">Queen</span>
+                  </div>
+                  <div class="location-hive-metrics location-hive-header-metrics" aria-hidden="true">
+                    <span>Strength</span>
+                    <span>Setup</span>
+                  </div>
+                  <div class="location-hive-record-text location-hive-header-text" aria-hidden="true">
+                    <span>Notes</span>
+                    <span>To-do</span>
+                  </div>
+                </div>
+              </th>
+            </tr>
+          </thead>
+          <tbody id="location-hives-body">${renderHiveRows(sortHives(activeSort, ascending)) || tableEmptyRow('No hives found.', 2)}</tbody>
+        </table>
+      `)}
     `, 'title')}
   `;
 
   const hivesBody = document.getElementById('location-hives-body');
-  let sortByDate = false;
-  const installSortAction = () => {
-    setTopbarActions([{
-      label: sortByDate ? 'Sort by Hive-Nr' : 'Sort by date',
-      alignLeft: true,
-      onClick: () => {
-        sortByDate = !sortByDate;
-        hivesBody.innerHTML = renderHiveRows(sortHives(sortByDate))
-          || `<tr><td class="muted">No hives found</td></tr>`;
-        installSortAction();
-      }
-    }]);
+  const sortButtons = [...app.querySelectorAll('[data-location-hive-sort]')];
+  const sortLabels = {
+    hive: 'Hive no.',
+    date: 'Latest inspection'
   };
-  installSortAction();
+  const updateSortIndicators = () => {
+    sortButtons.forEach(sortButton => {
+      const key = sortButton.dataset.locationHiveSort;
+      const isActive = key === activeSort;
+      sortButton.closest('th').setAttribute('aria-sort', isActive ? (ascending ? 'ascending' : 'descending') : 'none');
+      sortButton.classList.toggle('active', isActive);
+      sortButton.dataset.direction = isActive ? (ascending ? 'asc' : 'desc') : '';
+      const direction = isActive ? `, currently ${ascending ? 'ascending' : 'descending'}` : '';
+      sortButton.setAttribute('aria-label', `Sort hives by ${sortLabels[key]}${direction}`);
+    });
+  };
+  sortButtons.forEach(button => {
+    button.addEventListener('click', () => {
+      const requestedKey = button.dataset.locationHiveSort;
+      const key = Object.prototype.hasOwnProperty.call(sortLabels, requestedKey) ? requestedKey : 'hive';
+      ascending = activeSort === key ? !ascending : true;
+      activeSort = key;
+      hivesBody.innerHTML = renderHiveRows(sortHives(key, ascending))
+        || tableEmptyRow('No hives found.', 2);
+      updateSortIndicators();
+    });
+  });
+  updateSortIndicators();
 }
 
 async function renderHive(hiveId) {
   setActiveTab('/standort');
-  app.innerHTML = card('Hive', `#${hiveId}`, `<div class="skeleton"></div>`);
+  app.innerHTML = card('Hive', `#${hiveId}`, loadingStateHtml('Loading hive visits…'));
   const data = await apiGet({ action:'visits_by_hive', hive_id: hiveId });
-  const latestVisit = data.visits && data.visits.length ? data.visits[0] : null;
+  let visits = data.visits || [];
+  let hasMoreVisits = !!data.has_more;
+  let nextVisitOffset = Number(data.next_offset) || visits.length;
+  const latestVisit = visits.length ? visits[0] : null;
   const standort = latestVisit?.Standort || '—';
   setTopbarLocation(() => {
     location.hash = `#/standort/${encodeURIComponent(standort)}`;
@@ -737,16 +1002,14 @@ async function renderHive(hiveId) {
       { label: 'Edit Hive', onClick: () => { location.hash = `#/hive/${hiveId}/edit`; } },
       { label: 'Add Visit', primary: true, onClick: () => { location.hash = `#/hive/${hiveId}/new-visit`; } },
     ]);
+  } else if (authState.user) {
+    setTopbarActions([{ label: 'Read-only', disabled: true }]);
   }
-  const editButtons = canEdit ? '' : (authState.user ? `
-      <div class="hstack stack-gap-sm">
-        <button class="btn" disabled>Read-only</button>
-      </div>
-    ` : `
+  const editButtons = canEdit || authState.user ? '' : `
       <div class="hstack stack-gap-sm">
         <button class="btn" data-navigate="#/login?next=${encodeURIComponent(`#/hive/${hiveId}`)}">Sign in to edit</button>
       </div>
-    `);
+    `;
 
   const hiveTitle = data.hive?.Hive_nr ? `Hive Nr. ${data.hive.Hive_nr}` : `Hive ID: #${hiveId}`;
   const queenSummary = latestVisit
@@ -758,45 +1021,177 @@ async function renderHive(hiveId) {
     `Belegstelle: ${latestVisit?.queen_belegstelle || '—'}`
   ].join('\n');
 
-  const rows = data.visits.map(v => {
-    const navigationAttrs = `data-navigate="#/visit/${v.ID}" role="button" tabindex="0"`;
-    const brood = [v.Brut_Stifte, v.Brut_offen, v.Brut_verdeckelt].join('/');
-    const queenParts = joinValues([v.Queen_ID, v.Koenigin_status]);
-    const queen = `Q:${htmlesc(queenParts)}`;
-    const temperament = [v.Sanftmut, v.Wabensitz, v.Schwarmneigung].join('/');
-    const honeyFeed = ['H:', v.Honig, ' F: ',v.Futter].join('');
-    const strength = htmlesc(v.Volksstaerke || '');
-    const locationSetup = joinEscaped([v.Standort, v.Aufbau], ': ');
+  const displayValue = value => (
+    value !== null && value !== undefined && String(value).trim() !== ''
+      ? htmlesc(value)
+      : '—'
+  );
+  const renderVisitRows = visitRows => visitRows.map(v => {
+    const route = `#/visit/${encodeURIComponent(v.ID)}`;
+    const formattedDate = v.Datum ? fmtDate(v.Datum) : 'unknown date';
+    const dateContent = `<span class="hive-visit-date-full">${htmlesc(v.Datum ? fmtDate(v.Datum) : '—')}</span>`;
+    const dateMarkup = v.Datum
+      ? `<time datetime="${htmlesc(v.Datum)}">${dateContent}</time>`
+      : dateContent;
+    const locationSetup = joinEscaped([v.Standort, v.Aufbau], ' · ') || '—';
+    const queenId = v.Queen_ID ? `Q ${htmlesc(v.Queen_ID)}` : '—';
+    const queenStatus = joinEscaped([v.Koenigin_status]);
+    const brood = [v.Brut_Stifte, v.Brut_offen, v.Brut_verdeckelt]
+      .map(displayValue)
+      .join(' / ');
     return `
-      <tr class="hive-visit-row hive-visit-row-1" ${navigationAttrs}>
-        <td class="hive-visit-left"><strong>${htmlesc(v.Datum ? fmtDate(v.Datum) : '')}</strong></td>
-        <td class="hive-visit-left" colspan="3">${locationSetup}</td>
-        <td class="hive-visit-right">${strength}</td>
-      </tr>
-      <tr class="hive-visit-row hive-visit-row-2" ${navigationAttrs}>
-        <td class="hive-visit-left">Brut:${brood}</td>
-        <td class="hive-visit-left">${queen}</td>
-        <td class="hive-visit-left">${temperament}</td>
-        <td class="hive-visit-left">${honeyFeed}</td>
-      </tr>
-      <tr class="hive-visit-row hive-visit-row-3" ${navigationAttrs}>
-        <td class="hive-visit-left" colspan="4">${htmlesc(v.Bemerkungen || '')}</td>
-        <td class="hive-visit-right hive-visit-todo">${htmlesc(v.ToDo || '')}</td>
-      </tr>
-      <tr class="hive-visit-row hive-visit-row-4" ${navigationAttrs}>
-        <td colspan="5">&nbsp;</td>
+      <tr class="hive-visit-row" data-navigate="${route}">
+        <th class="hive-visit-key-cell" scope="row">
+          <a class="hive-visit-date-link" href="${route}" aria-label="Open visit from ${htmlesc(formattedDate)}">
+            ${dateMarkup}
+          </a>
+        </th>
+        <td class="hive-visit-comparison-cell">
+          <div class="hive-visit-grid">
+            <div class="hive-visit-slot hive-visit-slot-location">
+              <span class="sr-only">Location and setup</span>
+              <span class="hive-visit-clamp">${locationSetup}</span>
+            </div>
+
+            <div class="hive-visit-slot hive-visit-slot-queen">
+              <span class="sr-only">Queen ID and status</span>
+              <span class="hive-visit-clamp">${queenId}${queenStatus ? ` <span class="hive-visit-secondary">${queenStatus}</span>` : ''}</span>
+            </div>
+
+            <dl class="hive-visit-group hive-visit-colony">
+              <div><dt class="sr-only">Strength</dt><dd>${displayValue(v.Volksstaerke)}</dd></div>
+              <div><dt class="sr-only">Brood eggs, open, closed</dt><dd>${brood}</dd></div>
+            </dl>
+
+            <dl class="hive-visit-group hive-visit-behavior">
+              <div><dt class="sr-only">Temperament</dt><dd>${displayValue(v.Sanftmut)}</dd></div>
+              <div><dt class="sr-only">Comb seat</dt><dd>${displayValue(v.Wabensitz)}</dd></div>
+              <div><dt class="sr-only">Swarm tendency</dt><dd>${displayValue(v.Schwarmneigung)}</dd></div>
+            </dl>
+
+            <dl class="hive-visit-group hive-visit-stores">
+              <div><dt class="sr-only">Honey</dt><dd>${displayValue(v.Honig)}</dd></div>
+              <div><dt class="sr-only">Feed</dt><dd>${displayValue(v.Futter)}</dd></div>
+            </dl>
+
+            <div class="hive-visit-text">
+              <div class="hive-visit-slot muted">
+                <span class="sr-only">Notes</span>
+                ${v.Bemerkungen
+                  ? `<span class="hive-visit-clamp">${htmlesc(v.Bemerkungen)}</span>`
+                  : '<span class="hive-visit-empty">—</span>'}
+              </div>
+              <div class="hive-visit-slot hive-visit-slot-todo">
+                <span class="sr-only">To-do</span>
+                ${v.ToDo
+                  ? `<strong class="hive-visit-clamp">${htmlesc(v.ToDo)}</strong>`
+                  : '<span class="hive-visit-empty">—</span>'}
+              </div>
+            </div>
+          </div>
+        </td>
       </tr>
     `;
   }).join('');
+
+  const sortVisits = sortAscending => [...visits].sort((a, b) => {
+    const aDate = String(a.Datum || '');
+    const bDate = String(b.Datum || '');
+    if (!aDate && bDate) return 1;
+    if (aDate && !bDate) return -1;
+    const comparison = aDate.localeCompare(bDate) || Number(a.ID) - Number(b.ID);
+    return sortAscending ? comparison : -comparison;
+  });
+  let visitsAscending = false;
 
   app.innerHTML = card(hiveTitle, hiveSubtitle, `
     <div class="hstack">
       ${editButtons}
     </div>
-    <table class="table hive-visits-table">
-      <tbody>${rows || `<tr><td colspan="5" class="muted">No visits yet</td></tr>`}</tbody>
-    </table>
+    ${tableScrollHtml(`Visits for ${hiveTitle}`, `
+      <table class="table hive-visits-table" aria-label="Visits for ${htmlesc(hiveTitle)}">
+        <colgroup><col class="hive-visit-key-column"/><col/></colgroup>
+        <thead>
+          <tr>
+            <th scope="col">
+              <button type="button" class="table-sort-button record-sort-button" id="hive-visits-date-sort">Date</button>
+            </th>
+            <th scope="col" aria-label="Visit details">
+              <div class="hive-visit-grid hive-visit-header-grid">
+                <div class="hive-visit-slot hive-visit-slot-location" aria-hidden="true">Location / setup</div>
+                <div class="hive-visit-slot hive-visit-slot-queen" aria-hidden="true">Queen / status</div>
+                <div class="hive-visit-group hive-visit-colony hive-visit-header-group" aria-hidden="true">
+                  <span>Strength</span><span>Brood E/O/C</span>
+                </div>
+                <div class="hive-visit-group hive-visit-behavior hive-visit-header-group" aria-hidden="true">
+                  <span>Temper.</span><span>Comb seat</span><span>Swarm</span>
+                </div>
+                <div class="hive-visit-group hive-visit-stores hive-visit-header-group" aria-hidden="true">
+                  <span>Honey</span><span>Feed</span>
+                </div>
+                <div class="hive-visit-text hive-visit-header-text" aria-hidden="true">
+                  <span>Notes</span><span>To-do</span>
+                </div>
+              </div>
+            </th>
+          </tr>
+        </thead>
+        <tbody id="hive-visits-body">${renderVisitRows(sortVisits(visitsAscending)) || tableEmptyRow('No visits yet.', 2)}</tbody>
+      </table>
+    `)}
+    <div class="hstack hive-visits-pagination" id="hive-visits-pagination" ${hasMoreVisits ? '' : 'hidden'}>
+      <span class="muted" id="hive-visits-load-status" role="status" aria-live="polite"></span>
+      <button type="button" class="btn" id="hive-visits-load-more">Weitere laden</button>
+    </div>
   `);
+
+  const visitsBody = document.getElementById('hive-visits-body');
+  const dateSortButton = document.getElementById('hive-visits-date-sort');
+  const pagination = document.getElementById('hive-visits-pagination');
+  const loadMoreButton = document.getElementById('hive-visits-load-more');
+  const loadStatus = document.getElementById('hive-visits-load-status');
+  const updateVisitSortIndicator = () => {
+    dateSortButton.closest('th').setAttribute('aria-sort', visitsAscending ? 'ascending' : 'descending');
+    dateSortButton.classList.add('active');
+    dateSortButton.dataset.direction = visitsAscending ? 'asc' : 'desc';
+    dateSortButton.setAttribute('aria-label', `Sort visits by date, currently ${visitsAscending ? 'ascending' : 'descending'}`);
+  };
+  dateSortButton.addEventListener('click', () => {
+    visitsAscending = !visitsAscending;
+    visitsBody.innerHTML = renderVisitRows(sortVisits(visitsAscending))
+      || tableEmptyRow('No visits yet.', 2);
+    updateVisitSortIndicator();
+  });
+  loadMoreButton.addEventListener('click', async () => {
+    loadMoreButton.disabled = true;
+    loadMoreButton.textContent = 'Lädt…';
+    loadStatus.textContent = '';
+    try {
+      const moreData = await apiGet({
+        action: 'visits_by_hive',
+        hive_id: hiveId,
+        offset: nextVisitOffset
+      });
+      const newVisits = moreData.visits || [];
+      visits = visits.concat(newVisits);
+      hasMoreVisits = !!moreData.has_more;
+      nextVisitOffset = Number(moreData.next_offset) || visits.length;
+      visitsBody.innerHTML = renderVisitRows(sortVisits(visitsAscending))
+        || tableEmptyRow('No visits yet.', 2);
+      loadStatus.textContent = newVisits.length === 1
+        ? '1 weiterer Visit geladen.'
+        : `${newVisits.length} weitere Visits geladen.`;
+      pagination.hidden = false;
+      loadMoreButton.hidden = !hasMoreVisits;
+    } catch (error) {
+      if (error.name === 'AbortError') return;
+      loadStatus.textContent = `Weitere Visits konnten nicht geladen werden: ${error.message}`;
+    } finally {
+      loadMoreButton.disabled = false;
+      loadMoreButton.textContent = 'Weitere laden';
+    }
+  });
+  updateVisitSortIndicator();
 }
 
 async function renderHiveEdit(hiveId) {
@@ -808,20 +1203,21 @@ async function renderHiveEdit(hiveId) {
   }
   setTopbarBack(() => history.back());
   const writable = canWrite();
-  app.innerHTML = card('Hive', `#${hiveId}`, `<div class="skeleton"></div>`);
+  app.innerHTML = card('Hive', `#${hiveId}`, loadingStateHtml('Loading hive…'));
   try {
     const data = await apiGet({ action:'hive', id: hiveId });
     const h = data.hive;
 
     app.innerHTML = card('Hive', `Edit #${hiveId}`, `
-      ${!writable ? `<div class="notice">Read-only access.</div><div class="spacer"></div>` : ''}
+      ${!writable ? noticeHtml('Read-only access.', 'info') : ''}
       ${hiveFormHtml({ h, mode:'update', readOnly: !writable })}
     `);
 
     if (writable) wireHiveForm({ hiveId, mode:'update' });
   } catch (err) {
+    if (err?.name === 'AbortError') throw err;
     app.innerHTML = card('Hive', `#${hiveId}`, `
-      <div class="notice">Error loading hive: ${htmlesc(err.message)}</div>
+      ${noticeHtml(`Error loading hive: ${err.message}`, 'error')}
     `);
   }
 }
@@ -831,14 +1227,14 @@ async function renderHiveCreate() {
   if (!authState.user || !canWrite()) {
     setTopbarBack(() => history.back());
     app.innerHTML = card('Hive', 'New', `
-      <div class="notice">Write access required to create hives.</div>
+      ${noticeHtml('Write access required to create hives.', 'warning')}
     `);
     return;
   }
   setTopbarBack(() => {
     location.hash = '#/';
   });
-  app.innerHTML = card('Hive', 'New', `<div class="skeleton"></div>`);
+  app.innerHTML = card('Hive', 'New', loadingStateHtml('Preparing hive form…'));
 
   const h = { Hive_nr: null, inactive: 0 };
   app.innerHTML = card('Hive', 'Create new hive', `
@@ -856,16 +1252,16 @@ function hiveFormHtml({ h, mode='update', readOnly=false }) {
 
   return `
   <form id="hive-form" class="vstack">
-    <fieldset class="form single" ${readOnly ? 'disabled' : ''}>
+    <fieldset class="form form-grid" ${readOnly ? 'disabled' : ''}>
       <div class="field">
-        <label>Hive no.</label>
-        <input name="Hive_nr" value="${htmlesc(h.Hive_nr || '')}" placeholder="e.g., 12"/>
+        <label for="hive-number">Hive no.</label>
+        <input id="hive-number" name="Hive_nr" value="${htmlesc(h.Hive_nr || '')}" placeholder="e.g., 12"/>
       </div>
 
       <div class="field">
-        <label>Inactive</label>
-        <label class="checkbox-pill">
-          <input type="checkbox" name="inactive" value="1" ${String(h.inactive) === '1' ? 'checked' : ''}/>
+        <label for="hive-inactive">Inactive</label>
+        <label class="checkbox-pill" for="hive-inactive">
+          <input id="hive-inactive" type="checkbox" name="inactive" value="1" ${String(h.inactive) === '1' ? 'checked' : ''}/>
           Mark hive as inactive
         </label>
       </div>
@@ -876,7 +1272,7 @@ function hiveFormHtml({ h, mode='update', readOnly=false }) {
       ${submitBtn}
     </div>
 
-    <div id="hive-form-msg" class="muted" aria-live="polite"></div>
+    ${formStatusHtml('hive-form-msg')}
   </form>`;
 }
 
@@ -905,12 +1301,12 @@ async function renderNewVisit(hiveId) {
   if (!authState.user || !canWrite()) {
     setTopbarBack(() => history.back());
     app.innerHTML = card('New visit', `Hive #${hiveId}`, `
-      <div class="notice">Write access required to add visits.</div>
+      ${noticeHtml('Write access required to add visits.', 'warning')}
     `);
     return;
   }
   setTopbarBack(() => history.back());
-  app.innerHTML = card('New visit', `Hive #${hiveId}`, `<div class="skeleton"></div>`);
+  app.innerHTML = card('New visit', `Hive #${hiveId}`, loadingStateHtml('Preparing visit form…'));
   const [defaultsRes, queensRes] = await Promise.all([
     apiGet({ action:'visit_defaults', hive_id: hiveId }),
     apiGet({ action:'queen_options' })
@@ -938,8 +1334,7 @@ async function renderNewVisit(hiveId) {
   const queens = queensRes.queens || [];
 
   app.innerHTML = card('New visit', `Hive #${hiveId} (prefilled: location, queen, setup, to-do)`, `
-    <div class="notice">Tip: location, queen ID, setup, and to-do are prefilled from the latest visit (if any).</div>
-    <div class="spacer"></div>
+    ${noticeHtml('Tip: location, queen ID, setup, and to-do are prefilled from the latest visit (if any).', 'info')}
     ${visitFormHtml({ mode:'create', hiveId, visit: prefill, queens, readOnly: false })}
   `);
 
@@ -955,7 +1350,7 @@ async function renderVisit(visitId) {
   }
   setTopbarBack(null);
   const writable = canWrite();
-  app.innerHTML = card('Visit', `#${visitId}`, `<div class="skeleton"></div>`);
+  app.innerHTML = card('Visit', `#${visitId}`, loadingStateHtml('Loading visit…'));
   const [visitRes, queensRes] = await Promise.all([
     apiGet({ action:'visit', id: visitId }),
     apiGet({ action:'queen_options' })
@@ -973,7 +1368,7 @@ async function renderVisit(visitId) {
   const queens = queensRes.queens || [];
 
   app.innerHTML = card('Visit', `Hive #${hiveId} · ${fmtDate(v.Datum)} · Visit #${visitId}`, `
-    ${!writable ? `<div class="notice">Read-only access.</div><div class="spacer"></div>` : ''}
+    ${!writable ? noticeHtml('Read-only access.', 'info') : ''}
     ${visitFormHtml({ mode:'update', hiveId, visitId, readOnly: !writable, visit: {
       ...v,
       Volksstaerke: v.Volksstaerke ?? v['Volksstärke'],
@@ -1011,154 +1406,154 @@ function visitFormHtml({ mode, hiveId, visitId, visit, queens, readOnly=false })
   return `
   <form id="visit-form" class="vstack">
     <input type="hidden" name="Hive_ID" value="${htmlesc(hiveId)}"/>
-    <fieldset class="form single" ${readOnly ? 'disabled' : ''}>
+    <fieldset class="form form-grid" ${readOnly ? 'disabled' : ''}>
       <div class="field">
-        <label>Date</label>
-        <input name="Datum" type="date" value="${htmlesc(visit.Datum || '')}" required />
+        <label for="visit-date">Date</label>
+        <input id="visit-date" name="Datum" type="date" value="${htmlesc(visit.Datum || '')}" required />
       </div>
 
       <div class="field">
-        <label>Location</label>
-        <input name="Standort" value="${htmlesc(visit.Standort || '')}" placeholder="e.g., Garten, Waldstand, …"/>
+        <label for="visit-location">Location</label>
+        <input id="visit-location" name="Standort" value="${htmlesc(visit.Standort || '')}" placeholder="e.g., Garten, Waldstand, …"/>
       </div>
 
       <div class="field">
-        <label>Queen ID</label>
-        <select name="Queen_ID">${qOptions}</select>
+        <label for="visit-queen">Queen ID</label>
+        <select id="visit-queen" name="Queen_ID">${qOptions}</select>
       </div>
 
       <div class="field">
-        <label>Setup</label>
-        <input name="Aufbau" value="${htmlesc(visit.Aufbau || '')}" placeholder="e.g., 2 BR + 1 HR"/>
+        <label for="visit-setup">Setup</label>
+        <input id="visit-setup" name="Aufbau" value="${htmlesc(visit.Aufbau || '')}" placeholder="e.g., 2 BR + 1 HR"/>
       </div>
 
       <div class="field">
-        <label>Colony strength</label>
-        <div class="segmented-button segmented-button-neutral segmented-ka-soft" role="group" aria-label="Colony strength">
-          <label>
-            <input type="radio" name="Volksstaerke" value="" ${vsNorm === '' ? 'checked' : ''}/>
+        <span id="visit-strength-label" class="field-legend">Colony strength</span>
+        <div class="segmented-button segmented-button-neutral segmented-ka-soft" role="group" aria-labelledby="visit-strength-label">
+          <label for="visit-strength-na">
+            <input id="visit-strength-na" type="radio" name="Volksstaerke" value="" ${vsNorm === '' ? 'checked' : ''}/>
             <span>k.A.</span>
           </label>
-          <label>
-            <input type="radio" name="Volksstaerke" value="+" ${vsNorm === '+' ? 'checked' : ''}/>
+          <label for="visit-strength-one">
+            <input id="visit-strength-one" type="radio" name="Volksstaerke" value="+" ${vsNorm === '+' ? 'checked' : ''}/>
             <span>+</span>
           </label>
-          <label>
-            <input type="radio" name="Volksstaerke" value="++" ${vsNorm === '++' ? 'checked' : ''}/>
+          <label for="visit-strength-two">
+            <input id="visit-strength-two" type="radio" name="Volksstaerke" value="++" ${vsNorm === '++' ? 'checked' : ''}/>
             <span>++</span>
           </label>
-          <label>
-            <input type="radio" name="Volksstaerke" value="+++" ${vsNorm === '+++' ? 'checked' : ''}/>
+          <label for="visit-strength-three">
+            <input id="visit-strength-three" type="radio" name="Volksstaerke" value="+++" ${vsNorm === '+++' ? 'checked' : ''}/>
             <span>+++</span>
           </label>
         </div>
       </div>
 
       <div class="field">
-        <label>Queen status (e.g., da, nicht gesehen, weisellos)</label>
-        <input name="Koenigin_status" value="${htmlesc(visit.Koenigin_status || '')}" placeholder="da / …"/>
+        <label for="visit-queen-status">Queen status (e.g., da, nicht gesehen, weisellos)</label>
+        <input id="visit-queen-status" name="Koenigin_status" value="${htmlesc(visit.Koenigin_status || '')}" placeholder="da / …"/>
       </div>
 
       <div class="field">
-        <label>Brood</label>
-        <div class="segmented-button segmented-checkboxes" role="group" aria-label="Brood">
-          <label>
+        <span id="visit-brood-label" class="field-legend">Brood</span>
+        <div class="segmented-button segmented-checkboxes" role="group" aria-labelledby="visit-brood-label">
+          <label for="visit-brood-eggs">
             <input type="hidden" name="Brut_Stifte" value=""/>
-            <input type="checkbox" name="Brut_Stifte" value="+" ${visit.Brut_Stifte === '+' ? 'checked' : ''}/>
+            <input id="visit-brood-eggs" type="checkbox" name="Brut_Stifte" value="+" ${visit.Brut_Stifte === '+' ? 'checked' : ''}/>
             <span>Eggs</span>
           </label>
-          <label>
+          <label for="visit-brood-open">
             <input type="hidden" name="Brut_offen" value=""/>
-            <input type="checkbox" name="Brut_offen" value="+" ${visit.Brut_offen === '+' ? 'checked' : ''}/>
+            <input id="visit-brood-open" type="checkbox" name="Brut_offen" value="+" ${visit.Brut_offen === '+' ? 'checked' : ''}/>
             <span>Open</span>
           </label>
-          <label>
+          <label for="visit-brood-closed">
             <input type="hidden" name="Brut_verdeckelt" value=""/>
-            <input type="checkbox" name="Brut_verdeckelt" value="+" ${visit.Brut_verdeckelt === '+' ? 'checked' : ''}/>
+            <input id="visit-brood-closed" type="checkbox" name="Brut_verdeckelt" value="+" ${visit.Brut_verdeckelt === '+' ? 'checked' : ''}/>
             <span>Closed</span>
           </label>
         </div>
       </div>
 
       <div class="field">
-        <label>Temperament</label>
-        <div class="segmented-button segmented-ka-soft" role="group" aria-label="Temperament">
-          <label>
-            <input type="radio" name="Sanftmut" value="" ${tmNorm === '' ? 'checked' : ''}/>
+        <span id="visit-temperament-label" class="field-legend">Temperament</span>
+        <div class="segmented-button segmented-ka-soft" role="group" aria-labelledby="visit-temperament-label">
+          <label for="visit-temperament-na">
+            <input id="visit-temperament-na" type="radio" name="Sanftmut" value="" ${tmNorm === '' ? 'checked' : ''}/>
             <span>k.A.</span>
           </label>
-          <label>
-            <input type="radio" name="Sanftmut" value="+" ${tmNorm === '+' ? 'checked' : ''}/>
+          <label for="visit-temperament-positive">
+            <input id="visit-temperament-positive" type="radio" name="Sanftmut" value="+" ${tmNorm === '+' ? 'checked' : ''}/>
             <span>+</span>
           </label>
-          <label>
-            <input type="radio" name="Sanftmut" value="-" ${tmNorm === '-' ? 'checked' : ''}/>
+          <label for="visit-temperament-negative">
+            <input id="visit-temperament-negative" type="radio" name="Sanftmut" value="-" ${tmNorm === '-' ? 'checked' : ''}/>
             <span>-</span>
           </label>
         </div>
       </div>
 
       <div class="field">
-        <label>Comb seat</label>
-        <div class="segmented-button segmented-ka-soft" role="group" aria-label="Comb seat">
-          <label>
-            <input type="radio" name="Wabensitz" value="" ${wsNorm === '' ? 'checked' : ''}/>
+        <span id="visit-comb-seat-label" class="field-legend">Comb seat</span>
+        <div class="segmented-button segmented-ka-soft" role="group" aria-labelledby="visit-comb-seat-label">
+          <label for="visit-comb-seat-na">
+            <input id="visit-comb-seat-na" type="radio" name="Wabensitz" value="" ${wsNorm === '' ? 'checked' : ''}/>
             <span>k.A.</span>
           </label>
-          <label>
-            <input type="radio" name="Wabensitz" value="+" ${wsNorm === '+' ? 'checked' : ''}/>
+          <label for="visit-comb-seat-positive">
+            <input id="visit-comb-seat-positive" type="radio" name="Wabensitz" value="+" ${wsNorm === '+' ? 'checked' : ''}/>
             <span>+</span>
           </label>
-          <label>
-            <input type="radio" name="Wabensitz" value="-" ${wsNorm === '-' ? 'checked' : ''}/>
+          <label for="visit-comb-seat-negative">
+            <input id="visit-comb-seat-negative" type="radio" name="Wabensitz" value="-" ${wsNorm === '-' ? 'checked' : ''}/>
             <span>-</span>
           </label>
         </div>
       </div>
 
-      <div class="field">
-        <label>Swarm tendency</label>
-        <div class="segmented-button segmented-button-neutral segmented-button-fluid segmented-ka-soft" role="group" aria-label="Swarm tendency">
-          <label>
-            <input type="radio" name="Schwarmneigung" value="" ${swNorm === '' ? 'checked' : ''}/>
+      <div class="field full">
+        <span id="visit-swarm-label" class="field-legend">Swarm tendency</span>
+        <div class="segmented-button segmented-button-neutral segmented-button-fluid segmented-ka-soft" role="group" aria-labelledby="visit-swarm-label">
+          <label for="visit-swarm-na">
+            <input id="visit-swarm-na" type="radio" name="Schwarmneigung" value="" ${swNorm === '' ? 'checked' : ''}/>
             <span>k.A.</span>
           </label>
-          <label>
-            <input type="radio" name="Schwarmneigung" value="-" ${swNorm === '-' ? 'checked' : ''}/>
+          <label for="visit-swarm-none">
+            <input id="visit-swarm-none" type="radio" name="Schwarmneigung" value="-" ${swNorm === '-' ? 'checked' : ''}/>
             <span>None</span>
           </label>
-          <label>
-            <input type="radio" name="Schwarmneigung" value="WZ b" ${swNorm === 'WZ b' ? 'checked' : ''}/>
+          <label for="visit-swarm-wzb">
+            <input id="visit-swarm-wzb" type="radio" name="Schwarmneigung" value="WZ b" ${swNorm === 'WZ b' ? 'checked' : ''}/>
             <span>WZ b</span>
           </label>
-          <label>
-            <input type="radio" name="Schwarmneigung" value="WZ o" ${swNorm === 'WZ o' ? 'checked' : ''}/>
+          <label for="visit-swarm-wzo">
+            <input id="visit-swarm-wzo" type="radio" name="Schwarmneigung" value="WZ o" ${swNorm === 'WZ o' ? 'checked' : ''}/>
             <span>WZ o</span>
           </label>
-          <label>
-            <input type="radio" name="Schwarmneigung" value="WZ g" ${swNorm === 'WZ g' ? 'checked' : ''}/>
+          <label for="visit-swarm-wzg">
+            <input id="visit-swarm-wzg" type="radio" name="Schwarmneigung" value="WZ g" ${swNorm === 'WZ g' ? 'checked' : ''}/>
             <span>WZ g</span>
           </label>
-          <label>
-            <input type="radio" name="Schwarmneigung" value="Schw" ${swNorm === 'Schw' ? 'checked' : ''}/>
+          <label for="visit-swarm-schw">
+            <input id="visit-swarm-schw" type="radio" name="Schwarmneigung" value="Schw" ${swNorm === 'Schw' ? 'checked' : ''}/>
             <span>Schw</span>
           </label>
         </div>
       </div>
 
       <div class="field">
-        <label>Honey</label>
-        <input name="Honig" value="${htmlesc(visit.Honig || '')}"/>
+        <label for="visit-honey">Honey</label>
+        <input id="visit-honey" name="Honig" value="${htmlesc(visit.Honig || '')}"/>
       </div>
 
       <div class="field">
-        <label>Feed</label>
-        <input name="Futter" value="${htmlesc(visit.Futter || '')}"/>
+        <label for="visit-feed">Feed</label>
+        <input id="visit-feed" name="Futter" value="${htmlesc(visit.Futter || '')}"/>
       </div>
 
       <div class="field full">
-        <label>Notes</label>
-        <textarea name="Bemerkungen">${htmlesc(visit.Bemerkungen || '')}</textarea>
+        <label for="visit-notes">Notes</label>
+        <textarea id="visit-notes" name="Bemerkungen">${htmlesc(visit.Bemerkungen || '')}</textarea>
       </div>
 
       <div class="field full">
@@ -1178,7 +1573,7 @@ function visitFormHtml({ mode, hiveId, visitId, visit, queens, readOnly=false })
       </div>
     </div>
 
-    <div id="form-msg" class="muted" aria-live="polite"></div>
+    ${formStatusHtml('form-msg')}
   </form>`;
 }
 
@@ -1214,34 +1609,33 @@ function renderLogin(r) {
   setActiveTab('/login');
   setTopbarBack(() => history.back());
   const nextParam = r?.query?.get('next');
-  const decodedNext = nextParam ? decodeURIComponent(nextParam) : '#/';
-  const nextHash = decodedNext.startsWith('#') ? decodedNext : '#/';
+  const nextHash = nextParam?.startsWith('#') ? nextParam : '#/';
 
   app.innerHTML = card('Sign in', 'Use your Apiary account', `
     <form id="login-form" class="vstack">
-      <div class="form">
+      <div class="form form-grid">
         <div class="field">
-          <label>Username</label>
-          <input name="username" autocomplete="username" required />
+          <label for="login-username">Username</label>
+          <input id="login-username" name="username" autocomplete="username" required />
         </div>
         <div class="field">
-          <label>Password</label>
-          <input type="password" name="password" autocomplete="current-password" required />
+          <label for="login-password">Password</label>
+          <input id="login-password" type="password" name="password" autocomplete="current-password" required />
         </div>
       </div>
       <div class="hstack form-actions">
         <button type="button" class="btn" data-back>Cancel</button>
         <button type="submit" class="btn primary">Sign in</button>
       </div>
-      <div id="login-msg" class="muted" aria-live="polite"></div>
+      ${formStatusHtml('login-msg')}
     </form>
-    <div id="login-bootstrap" class="notice" hidden>
+    <div id="login-bootstrap" class="notice" data-state="info" role="status" aria-live="polite" hidden>
       <div class="vstack stack-gap-sm">
         <div>No admin user exists yet. Create a default admin account (admin / admin).</div>
         <div class="hstack form-actions">
           <button type="button" id="login-bootstrap-btn" class="btn primary">Create admin user</button>
         </div>
-        <div id="login-bootstrap-msg" class="muted" aria-live="polite"></div>
+        ${formStatusHtml('login-bootstrap-msg')}
       </div>
     </div>
   `);
@@ -1279,15 +1673,18 @@ function renderLogin(r) {
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    msg.textContent = 'Signing in...';
+    setFormBusy(form, true);
+    setFormStatus(msg, 'Signing in...', 'busy');
     const data = Object.fromEntries(new FormData(form).entries());
     try {
       const res = await apiPost({ action:'login' }, data, { suppressAuthRedirect: true });
       setAuth(res.user || null, res.csrf || null);
-      msg.textContent = 'Signed in.';
+      setFormStatus(msg, 'Signed in.', 'success');
       location.hash = nextHash;
     } catch (err) {
-      msg.textContent = `Error: ${err.message}`;
+      setFormStatus(msg, `Error: ${err.message}`, 'error');
+    } finally {
+      setFormBusy(form, false);
     }
   });
 
@@ -1297,18 +1694,18 @@ function renderLogin(r) {
         return;
       }
       bootstrapBtn.disabled = true;
-      if (bootstrapMsg) bootstrapMsg.textContent = 'Creating admin user...';
+      setFormStatus(bootstrapMsg, 'Creating admin user...', 'busy');
       try {
         await ensureAnonymousCsrf();
         await apiPost({ action:'admin_bootstrap_create' }, { confirm: true }, { suppressAuthRedirect: true });
-        if (bootstrapMsg) bootstrapMsg.textContent = 'Admin user created. You can sign in with admin / admin.';
+        setFormStatus(bootstrapMsg, 'Admin user created. You can sign in with admin / admin.', 'success');
         bootstrapBtn.hidden = true;
         const usernameInput = form.querySelector('input[name="username"]');
         const passwordInput = form.querySelector('input[name="password"]');
         if (usernameInput) usernameInput.value = 'admin';
         if (passwordInput) passwordInput.value = 'admin';
       } catch (err) {
-        if (bootstrapMsg) bootstrapMsg.textContent = `Error: ${err.message}`;
+        setFormStatus(bootstrapMsg, `Error: ${err.message}`, 'error');
       } finally {
         bootstrapBtn.disabled = false;
       }
@@ -1323,93 +1720,108 @@ function renderAccount() {
   setTopbarBack(() => history.back());
   app.innerHTML = card('Account', 'Change password', `
     <form id="password-form" class="vstack">
-      <div class="form">
+      <div class="form form-grid">
         <div class="field">
-          <label>Current password</label>
-          <input type="password" name="current_password" autocomplete="current-password" required />
+          <label for="account-current-password">Current password</label>
+          <input id="account-current-password" type="password" name="current_password" autocomplete="current-password" required />
         </div>
         <div class="field">
-          <label>New password</label>
-          <input type="password" name="new_password" autocomplete="new-password" minlength="7" required />
+          <label for="account-new-password">New password</label>
+          <input id="account-new-password" type="password" name="new_password" autocomplete="new-password" minlength="7" required />
         </div>
         <div class="field">
-          <label>Confirm new password</label>
-          <input type="password" name="confirm_password" autocomplete="new-password" minlength="7" required />
+          <label for="account-confirm-password">Confirm new password</label>
+          <input id="account-confirm-password" type="password" name="confirm_password" autocomplete="new-password" minlength="7" aria-describedby="password-msg" required />
         </div>
       </div>
       <div class="hstack form-actions">
         <button type="button" class="btn" data-back>Cancel</button>
         <button type="submit" class="btn primary">Update password</button>
       </div>
-      <div id="password-msg" class="muted" aria-live="polite"></div>
+      ${formStatusHtml('password-msg')}
     </form>
   `);
 
   const form = document.getElementById('password-form');
   const msg = document.getElementById('password-msg');
+  const confirmPassword = form.elements.namedItem('confirm_password');
+
+  confirmPassword?.addEventListener('input', () => {
+    confirmPassword.removeAttribute('aria-invalid');
+  });
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    msg.textContent = 'Updating...';
+    form.classList.add('was-validated');
+    setFormStatus(msg, 'Updating...', 'busy');
 
     const data = Object.fromEntries(new FormData(form).entries());
     if (data.new_password !== data.confirm_password) {
-      msg.textContent = 'Error: new passwords do not match.';
+      confirmPassword?.setAttribute('aria-invalid', 'true');
+      setFormStatus(msg, 'Error: new passwords do not match.', 'error');
+      confirmPassword?.focus();
       return;
     }
 
+    setFormBusy(form, true);
     try {
       await apiPost(
         { action:'change_password' },
         { current_password: data.current_password, new_password: data.new_password }
       );
-      msg.textContent = 'Password updated.';
+      setFormStatus(msg, 'Password updated.', 'success');
       form.reset();
     } catch (err) {
-      msg.textContent = `Error: ${err.message}`;
+      setFormStatus(msg, `Error: ${err.message}`, 'error');
+    } finally {
+      setFormBusy(form, false);
     }
   });
 }
 
 function renderAdminGate() {
+  setActiveTab('/admin');
   setTopbarBack(() => history.back());
   app.innerHTML = card('User Administration', 'Admin only', `
-    <div class="notice">Admin access required.</div>
+    ${noticeHtml('Admin access required.', 'warning')}
   `);
 }
 
 async function renderUserAdmin() {
   if (!isAdmin()) return renderAdminGate();
+  setActiveTab('/admin');
   setTopbarBack(() => history.back());
-  app.innerHTML = card('User Administration', 'Manage users', `<div class="skeleton"></div>`);
+  app.innerHTML = card('User Administration', 'Manage users', loadingStateHtml('Loading users…'));
   const data = await apiGet({ action:'users_list' });
   const users = data.users || [];
 
   const rows = users.map(u => {
     const isSelf = authState.user && String(authState.user.id) === String(u.id);
     const roleSelect = `
-      <select class="user-role" data-id="${htmlesc(u.id)}" data-prev="${htmlesc(u.role)}" ${isSelf ? 'disabled' : ''}>
+      <select id="user-role-${htmlesc(u.id)}" class="user-role" data-id="${htmlesc(u.id)}" data-prev="${htmlesc(u.role)}" aria-label="Role for ${htmlesc(u.username)}" ${isSelf ? 'disabled' : ''}>
         <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>admin</option>
         <option value="contributor" ${u.role === 'contributor' ? 'selected' : ''}>contributor</option>
         <option value="readonly" ${u.role === 'readonly' ? 'selected' : ''}>readonly</option>
       </select>
     `;
     const resetBtn = isSelf
-      ? `<button class="btn" disabled>Reset Password</button>`
-      : `<button class="btn user-reset" data-id="${htmlesc(u.id)}" data-name="${htmlesc(u.username)}">Reset Password</button>`;
+      ? `<button class="btn" aria-label="Reset password unavailable for current user" disabled>Reset Password</button>`
+      : `<button class="btn user-reset" data-id="${htmlesc(u.id)}" data-name="${htmlesc(u.username)}" aria-label="Reset password for ${htmlesc(u.username)}">Reset Password</button>`;
     const delBtn = isSelf
-      ? `<button class="btn" disabled>Current user</button>`
-      : `<button class="btn danger user-delete" data-id="${htmlesc(u.id)}" data-name="${htmlesc(u.username)}">Delete</button>`;
+      ? `<button class="btn" aria-label="Current user cannot be deleted" disabled>Current user</button>`
+      : `<button class="btn danger user-delete" data-id="${htmlesc(u.id)}" data-name="${htmlesc(u.username)}" aria-label="Delete ${htmlesc(u.username)}">Delete</button>`;
     return `
       <tr>
         <td>${htmlesc(u.id)}</td>
-        <td>${htmlesc(u.username)}</td>
+        <th scope="row">${htmlesc(u.username)}</th>
         <td>${roleSelect}</td>
         <td>${htmlesc(u.created_at || '—')}</td>
         <td>${htmlesc(u.last_login || '—')}</td>
-        <td class="hstack table-actions">
-          ${resetBtn}
-          ${delBtn}
+        <td class="table-actions">
+          <div class="table-actions-group">
+            ${resetBtn}
+            ${delBtn}
+          </div>
         </td>
       </tr>
     `;
@@ -1422,19 +1834,20 @@ async function renderUserAdmin() {
         <button class="btn primary" data-navigate="#/admin/users/new">Add User</button>
       </div>
     </div>
-    <div class="spacer"></div>
-    <table class="table">
-      <thead><tr>
-        <th>ID</th>
-        <th>Username</th>
-        <th>Role</th>
-        <th>Created</th>
-        <th>Last login</th>
-        <th>Actions</th>
-      </tr></thead>
-      <tbody>${rows || `<tr><td colspan="6" class="muted">No users found</td></tr>`}</tbody>
-    </table>
-    <div id="users-msg" class="muted" aria-live="polite"></div>
+    ${tableScrollHtml('User accounts', `
+      <table class="table" aria-label="User accounts">
+        <thead><tr>
+          <th scope="col">ID</th>
+          <th scope="col">Username</th>
+          <th scope="col">Role</th>
+          <th scope="col">Created</th>
+          <th scope="col">Last login</th>
+          <th scope="col">Actions</th>
+        </tr></thead>
+        <tbody>${rows || tableEmptyRow('No users found.', 6)}</tbody>
+      </table>
+    `)}
+    ${formStatusHtml('users-msg')}
   `);
 
   const msg = document.getElementById('users-msg');
@@ -1443,12 +1856,15 @@ async function renderUserAdmin() {
       const id = btn.getAttribute('data-id');
       const name = btn.getAttribute('data-name') || 'this user';
       if (!confirm(`Reset password for ${name} to the configured temporary password?`)) return;
-      msg.textContent = 'Resetting password...';
+      setFormStatus(msg, 'Resetting password...', 'busy');
+      btn.disabled = true;
       try {
         const result = await apiPost({ action:'user_reset_password' }, { id });
-        msg.textContent = `Password reset to ${result.temporary_password}.`;
+        setFormStatus(msg, `Password reset to ${result.temporary_password}.`, 'success');
       } catch (err) {
-        msg.textContent = `Error: ${err.message}`;
+        setFormStatus(msg, `Error: ${err.message}`, 'error');
+      } finally {
+        btn.disabled = false;
       }
     });
   });
@@ -1457,11 +1873,12 @@ async function renderUserAdmin() {
       const id = select.getAttribute('data-id');
       const prev = select.getAttribute('data-prev') || '';
       const role = select.value;
-      msg.textContent = 'Updating role...';
+      setFormStatus(msg, 'Updating role...', 'busy');
+      select.disabled = true;
       try {
         await apiPost({ action:'user_update_role' }, { id, role });
         select.setAttribute('data-prev', role);
-        msg.textContent = 'Role updated.';
+        setFormStatus(msg, 'Role updated.', 'success');
         if (authState.user && String(authState.user.id) === String(id)) {
           authState.user.role = role;
           updateAuthUi();
@@ -1470,8 +1887,10 @@ async function renderUserAdmin() {
           }
         }
       } catch (err) {
-        msg.textContent = `Error: ${err.message}`;
+        setFormStatus(msg, `Error: ${err.message}`, 'error');
         select.value = prev;
+      } finally {
+        select.disabled = false;
       }
     });
   });
@@ -1480,13 +1899,20 @@ async function renderUserAdmin() {
       const id = btn.getAttribute('data-id');
       const name = btn.getAttribute('data-name') || 'this user';
       if (!confirm(`Delete ${name}? This cannot be undone.`)) return;
-      msg.textContent = 'Deleting...';
+      setFormStatus(msg, 'Deleting...', 'busy');
+      btn.disabled = true;
       try {
         await apiPost({ action:'user_delete' }, { id });
-        msg.textContent = 'Deleted.';
-        renderUserAdmin();
+        setFormStatus(msg, 'Deleted.', 'success');
+        const row = btn.closest('tr');
+        const tableBody = row?.parentElement;
+        row?.remove();
+        if (tableBody && tableBody.children.length === 0) {
+          tableBody.innerHTML = tableEmptyRow('No users found.', 6);
+        }
       } catch (err) {
-        msg.textContent = `Error: ${err.message}`;
+        setFormStatus(msg, `Error: ${err.message}`, 'error');
+        btn.disabled = false;
       }
     });
   });
@@ -1494,58 +1920,71 @@ async function renderUserAdmin() {
 
 function renderUserCreate() {
   if (!isAdmin()) return renderAdminGate();
+  setActiveTab('/admin');
   setTopbarBack(() => history.back());
   app.innerHTML = card('Add User', 'Create a new account', `
     <form id="user-create-form" class="vstack">
-      <div class="form">
+      <div class="form form-grid">
         <div class="field">
-          <label>Username</label>
-          <input name="username" autocomplete="username" required />
+          <label for="user-create-username">Username</label>
+          <input id="user-create-username" name="username" autocomplete="username" required />
         </div>
         <div class="field">
-          <label>Role</label>
-          <select name="role" required>
+          <label for="user-create-role">Role</label>
+          <select id="user-create-role" name="role" required>
             <option value="admin">admin</option>
             <option value="contributor" selected>contributor</option>
             <option value="readonly">readonly</option>
           </select>
         </div>
         <div class="field">
-          <label>Password</label>
-          <input type="password" name="password" autocomplete="new-password" minlength="7" required />
+          <label for="user-create-password">Password</label>
+          <input id="user-create-password" type="password" name="password" autocomplete="new-password" minlength="7" required />
         </div>
         <div class="field">
-          <label>Confirm password</label>
-          <input type="password" name="confirm_password" autocomplete="new-password" minlength="7" required />
+          <label for="user-create-confirm-password">Confirm password</label>
+          <input id="user-create-confirm-password" type="password" name="confirm_password" autocomplete="new-password" minlength="7" aria-describedby="user-create-msg" required />
         </div>
       </div>
       <div class="hstack form-actions">
         <button type="button" class="btn" data-back>Cancel</button>
         <button type="submit" class="btn primary">Create user</button>
       </div>
-      <div id="user-create-msg" class="muted" aria-live="polite"></div>
+      ${formStatusHtml('user-create-msg')}
     </form>
   `);
 
   const form = document.getElementById('user-create-form');
   const msg = document.getElementById('user-create-msg');
+  const confirmPassword = form.elements.namedItem('confirm_password');
+
+  confirmPassword?.addEventListener('input', () => {
+    confirmPassword.removeAttribute('aria-invalid');
+  });
+
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    msg.textContent = 'Creating...';
+    form.classList.add('was-validated');
+    setFormStatus(msg, 'Creating...', 'busy');
     const data = Object.fromEntries(new FormData(form).entries());
     if (data.password !== data.confirm_password) {
-      msg.textContent = 'Error: passwords do not match.';
+      confirmPassword?.setAttribute('aria-invalid', 'true');
+      setFormStatus(msg, 'Error: passwords do not match.', 'error');
+      confirmPassword?.focus();
       return;
     }
+    setFormBusy(form, true);
     try {
       await apiPost(
         { action:'user_create' },
         { username: data.username, role: data.role, password: data.password }
       );
-      msg.textContent = 'User created.';
+      setFormStatus(msg, 'User created.', 'success');
       location.hash = '#/admin/users';
     } catch (err) {
-      msg.textContent = `Error: ${err.message}`;
+      setFormStatus(msg, `Error: ${err.message}`, 'error');
+    } finally {
+      setFormBusy(form, false);
     }
   });
 }
@@ -1555,6 +1994,7 @@ async function router() {
   const r = parseRoute();
   const parts = r.parts; // e.g., ['standort','Foo'] etc.
   const path = '/' + (parts[0] || '');
+  document.body.dataset.route = parts.length ? parts.join('-') : 'locations';
   setTopbarBack(null);
   setTopbarLocation(null);
   setTopbarActions([]);
@@ -1601,16 +2041,24 @@ async function router() {
   }
 
   setActiveTab('');
-  app.innerHTML = card('Not found', null, `<div class="notice">The requested page does not exist.</div>`);
+  app.innerHTML = card('Not found', null, noticeHtml('The requested page does not exist.', 'error'));
 }
 
 async function runRouter() {
+  const token = ++routeRenderToken;
+  routeAbortController?.abort();
+  routeAbortController = new AbortController();
+  app.setAttribute('aria-busy', 'true');
   try {
     await router();
+    finalizeRouteView(token);
   } catch (error) {
+    if (token !== routeRenderToken) return;
+    setActiveTab('');
     app.innerHTML = card('Error', null, `
-      <div class="notice">Unable to load this page: ${htmlesc(error.message)}</div>
+      ${noticeHtml(`Unable to load this page: ${error.message}`, 'error')}
     `);
+    finalizeRouteView(token);
   }
 }
 
@@ -1627,14 +2075,21 @@ function activateNavigation(target, event) {
 }
 
 document.addEventListener('click', (event) => {
-  activateNavigation(event.target.closest('[data-navigate], [data-back]'), event);
+  const target = event.target.closest('[data-navigate], [data-back]');
+  const nativeLink = event.target.closest('a[href]');
+  if (nativeLink && (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)) {
+    return;
+  }
+  activateNavigation(target, event);
 });
 
 document.addEventListener('keydown', (event) => {
-  if (event.key !== 'Enter' && event.key !== ' ') {
-    return;
-  }
-  activateNavigation(event.target.closest('[data-navigate], [data-back]'), event);
+  if ((event.key !== 'Enter' && event.key !== ' ') || event.repeat) return;
+  const target = event.target.closest('[data-navigate], [data-back]');
+  if (!target) return;
+  const nativeControl = event.target.closest('a[href], button, input, select, textarea, summary');
+  if (nativeControl || target.matches('a[href], button, input, select, textarea, summary')) return;
+  activateNavigation(target, event);
 });
 
 authReady = initAuth();
