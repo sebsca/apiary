@@ -561,9 +561,16 @@ async function renderQueens() {
   `));
   const data = await apiGet({ action:'queens' });
   const queens = data.queens || [];
+  const queenIds = new Set(queens.map(queen => String(queen.ID)));
+  let queenFilterId = '';
   const canEdit = canWrite();
   const strong = v => (v ? `<strong>${htmlesc(v)}</strong>` : '');
   const joinParts = parts => parts.filter(p => p && String(p).length > 0).join(' · ');
+  const motherReference = value => {
+    const motherId = String(value ?? '').trim();
+    if (!motherId || !queenIds.has(motherId)) return htmlesc(value || '');
+    return `<button type="button" class="table-record-link queen-filter-link" data-queen-filter-id="${htmlesc(motherId)}" aria-label="Filter table to mother queen ${htmlesc(motherId)}">${htmlesc(motherId)}</button>`;
+  };
   const queenYearClass = year => {
     const digit = Number.parseInt(String(year ?? '').slice(-1), 10);
     if (!Number.isFinite(digit)) return '';
@@ -585,20 +592,22 @@ async function renderQueens() {
     id: queen => [queen.ID],
     location: queen => [queen.Standort, queen.Hive_nr]
   };
-  const sortQueens = (key, sortAscending) => [...queens].sort((left, right) => {
-    const valueGetter = sortValues[key] || sortValues.birth;
-    const leftValues = valueGetter(left);
-    const rightValues = valueGetter(right);
-    for (let index = 0; index < leftValues.length; index += 1) {
-      const comparison = compareValues(
-        leftValues[index],
-        rightValues[index],
-        sortAscending
-      );
-      if (comparison !== 0) return comparison;
-    }
-    return compareValues(left.ID, right.ID, true);
-  });
+  const sortQueens = (key, sortAscending) => [...queens]
+    .filter(queen => !queenFilterId || String(queen.ID) === queenFilterId)
+    .sort((left, right) => {
+      const valueGetter = sortValues[key] || sortValues.birth;
+      const leftValues = valueGetter(left);
+      const rightValues = valueGetter(right);
+      for (let index = 0; index < leftValues.length; index += 1) {
+        const comparison = compareValues(
+          leftValues[index],
+          rightValues[index],
+          sortAscending
+        );
+        if (comparison !== 0) return comparison;
+      }
+      return compareValues(left.ID, right.ID, true);
+    });
   let addQueenBtn = '';
   if (canEdit) {
     setTopbarActions([
@@ -632,7 +641,7 @@ async function renderQueens() {
             <div class="qleft">${joinParts([
               htmlesc(q.Geburtsjahr || ''),
               htmlesc(q.Zuechter || ''),
-              htmlesc(q.LN_Mutter || ''),
+              motherReference(q.LN_Mutter),
               htmlesc(q.LN_Vatermutter || ''),
             ])}</div>
             <div class="qright">${strong(q.Standort || '')}</div>
@@ -645,6 +654,9 @@ async function renderQueens() {
 
   app.innerHTML = card('Queens', null, `
     ${addQueenBtn ? `<div class="hstack">${addQueenBtn}</div>` : ''}
+    <div id="queen-filter-bar" hidden>
+      <span id="queen-filter-label" role="status" aria-live="polite"></span>
+    </div>
     ${tableScrollHtml('Queens', `
       <table class="table queens-table" aria-label="Queens">
         ${sortHeader}
@@ -654,7 +666,26 @@ async function renderQueens() {
   `);
 
   const tableBody = document.getElementById('queens-table-body');
+  const filterBar = document.getElementById('queen-filter-bar');
+  const filterLabel = document.getElementById('queen-filter-label');
   const sortButtons = [...app.querySelectorAll('[data-queen-sort]')];
+  const renderFilteredQueens = (focusResult = false) => {
+    tableBody.innerHTML = renderQueenRows(sortQueens(activeSort, ascending))
+      || tableEmptyRow('No queens found.', 3);
+    filterBar.hidden = !queenFilterId;
+    filterLabel.textContent = queenFilterId ? `Filtered to queen #${queenFilterId}` : '';
+    if (focusResult) {
+      tableBody.querySelector('.table-record-link[href]')?.focus();
+    }
+  };
+  tableBody.addEventListener('click', event => {
+    const reference = event.target.closest('[data-queen-filter-id]');
+    if (!reference) return;
+    event.preventDefault();
+    event.stopPropagation();
+    queenFilterId = reference.dataset.queenFilterId;
+    renderFilteredQueens(true);
+  });
   const updateSortIndicators = () => {
     sortButtons.forEach(sortButton => {
       const isActive = sortButton.dataset.queenSort === activeSort;
@@ -672,8 +703,7 @@ async function renderQueens() {
       const key = Object.prototype.hasOwnProperty.call(sortOptions, requestedKey) ? requestedKey : 'birth';
       ascending = activeSort === key ? !ascending : sortOptions[key].defaultAscending;
       activeSort = key;
-      tableBody.innerHTML = renderQueenRows(sortQueens(key, ascending))
-        || tableEmptyRow('No queens found.', 3);
+      renderFilteredQueens();
       updateSortIndicators();
     });
   });

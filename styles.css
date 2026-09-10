@@ -771,6 +771,16 @@ body[data-route^="hive-"][data-route$="-new-visit"] .container {
   text-underline-offset: 3px;
 }
 
+.queen-filter-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  cursor: pointer;
+}
+
 .table:not(.locations-table):not(.queens-table):not(.location-hives-table):not(.hive-visits-table) {
   min-width: 690px;
 }
