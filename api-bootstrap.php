@@ -58,4 +58,56 @@ function get_pdo(): PDO {
   ]);
 }
 
+function apiary_start_session(): void {
+  if (session_status() === PHP_SESSION_ACTIVE) {
+    return;
+  }
+  $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+    || (!empty($_SERVER['SERVER_PORT']) && (int)$_SERVER['SERVER_PORT'] === 443);
+  ini_set('session.cookie_httponly', '1');
+  ini_set('session.cookie_samesite', 'Lax');
+  if ($https) {
+    ini_set('session.cookie_secure', '1');
+  }
+  session_start();
+}
+
+function apiary_password_fingerprint(string $passwordHash): string {
+  return hash('sha256', $passwordHash);
+}
+
+function apiary_refresh_authenticated_user(PDO $pdo): ?array {
+  $userId = (int)($_SESSION['user_id'] ?? 0);
+  if ($userId <= 0) {
+    return null;
+  }
+
+  $stmt = $pdo->prepare(
+    'SELECT id, username, password_hash, role FROM Users WHERE id = :id LIMIT 1'
+  );
+  $stmt->execute(['id' => $userId]);
+  $user = $stmt->fetch();
+  $passwordHash = is_array($user) ? (string)($user['password_hash'] ?? '') : '';
+  $sessionFingerprint = (string)($_SESSION['password_fingerprint'] ?? '');
+  $currentFingerprint = $passwordHash !== ''
+    ? apiary_password_fingerprint($passwordHash)
+    : '';
+
+  if (!$user || $sessionFingerprint === '' || $currentFingerprint === ''
+      || !hash_equals($currentFingerprint, $sessionFingerprint)) {
+    $_SESSION = [];
+    return null;
+  }
+
+  $_SESSION['user_id'] = (int)$user['id'];
+  $_SESSION['username'] = (string)$user['username'];
+  $_SESSION['role'] = (string)$user['role'];
+
+  return [
+    'id' => (int)$user['id'],
+    'username' => (string)$user['username'],
+    'role' => (string)$user['role']
+  ];
+}
+
 load_env_file(__DIR__ . '/.env');

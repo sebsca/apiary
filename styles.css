@@ -204,7 +204,7 @@ a {
   display: grid;
   grid-column: 1 / -1;
   grid-row: 2;
-  grid-template-columns: repeat(4, minmax(max-content, 1fr));
+  grid-template-columns: repeat(5, minmax(max-content, 1fr));
   width: calc(100% + var(--page-gutter) + var(--page-gutter));
   margin-inline: calc(0px - var(--page-gutter));
   overflow-x: auto;
@@ -427,6 +427,14 @@ body[data-route^="hive-"][data-route$="-new-visit"] .container {
   box-shadow: var(--shadow-card);
 }
 
+.charts-frame {
+  display: block;
+  width: 100%;
+  min-height: max(620px, calc(100vh - 150px));
+  border: 0;
+  background: transparent;
+}
+
 .card-header {
   display: flex;
   flex-direction: column;
@@ -443,7 +451,7 @@ body[data-route^="hive-"][data-route$="-new-visit"] .container {
   gap: var(--space-3);
 }
 
-.card-body > :empty {
+.card-body > :empty:not(iframe) {
   display: none;
 }
 

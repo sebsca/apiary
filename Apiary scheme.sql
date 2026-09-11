@@ -7,6 +7,8 @@ SET FOREIGN_KEY_CHECKS = 0;
 DROP TABLE IF EXISTS Visits;
 DROP TABLE IF EXISTS Queens;
 DROP TABLE IF EXISTS Hives;
+DROP TABLE IF EXISTS LoginRateLimits;
+DROP TABLE IF EXISTS LoginAttempts;
 DROP TABLE IF EXISTS Users;
 
 CREATE TABLE Hives (
@@ -39,6 +41,14 @@ CREATE TABLE Users (
   PRIMARY KEY (id),
   UNIQUE KEY users_username_unique (username),
   CONSTRAINT users_role_check CHECK (role IN ('admin', 'contributor', 'readonly'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE LoginRateLimits (
+  scope_type enum('account_ip', 'ip', 'account') NOT NULL,
+  scope_key char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  attempt_count int unsigned NOT NULL DEFAULT 0,
+  window_started_at datetime(6) NOT NULL,
+  PRIMARY KEY (scope_type, scope_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE Visits (

@@ -27,7 +27,7 @@ Lightweight SPA + PHP JSON API for managing apiary visits, hives, and queens.
 2. Ensure PHP + PDO MySQL are enabled.
 3. Configure the database connection (see below).
 4. Create the Apiary tables using the provided SQL script (see below).
-5. Ensure the `Hives`, `Queens`, `Visits`, and `Users` tables exist.
+5. Ensure the `Hives`, `Queens`, `Visits`, `Users`, and `LoginRateLimits` tables exist.
 6. Create your first admin user via the login screen bootstrap.
 
 ## Database connection
@@ -79,6 +79,7 @@ After loading the schema, open the login screen. If no admin exists, you’ll se
   - `readonly` – read-only
 - UI disables edit/create controls for read-only users.
 - `logout` is POST-only.
+- Failed logins are rate-limited by account/IP, IP, and account. Database locks make checks and counter updates atomic. Limits expire automatically and never modify password hashes. If the rate-limit storage is unavailable, new logins return HTTP 503.
 
 ## User administration (admin only)
 - Button: **User Administration** (top-right)
@@ -124,4 +125,5 @@ Run the dependency-free Sankey tests with:
 ```
 php tests/movements_test.php
 php tests/routes_test.php
+php tests/login_security_test.php
 ```

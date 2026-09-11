@@ -3,17 +3,13 @@
 // Requires PHP 7.4+ and MySQL 8+ (for window functions).
 require_once __DIR__ . '/api-bootstrap.php';
 require_once __DIR__ . '/api-routes.php';
+require_once __DIR__ . '/login-security.php';
 require_once __DIR__ . '/movements.php';
 
 const USER_ROLES = ['admin', 'contributor', 'readonly'];
 const DEFAULT_RESET_PASSWORD = '12345678';
-$https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (!empty($_SERVER['SERVER_PORT']) && (int)$_SERVER['SERVER_PORT'] === 443);
-ini_set('session.cookie_httponly', '1');
-ini_set('session.cookie_samesite', 'Lax');
-if ($https) {
-  ini_set('session.cookie_secure', '1');
-}
-session_start();
+const LOGIN_DUMMY_PASSWORD_HASH = '$2y$10$G6J5T5wF7nHtvU5E8KywmOfl3MT6NeTK1A/TZ2PWx1EflzV7IWAD2';
+apiary_start_session();
 
 header('Content-Type: application/json; charset=utf-8');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
@@ -28,50 +24,6 @@ function respond($data, int $status=200) {
   http_response_code($status);
   echo json_encode($data, JSON_UNESCAPED_UNICODE);
   exit;
-}
-
-function login_failure_path(string $username): string {
-  $dir = sys_get_temp_dir() . '/apiary_login_failures';
-  if (!is_dir($dir)) {
-    @mkdir($dir, 0700, true);
-  }
-  $key = hash('sha256', $username);
-  return $dir . '/' . $key . '.json';
-}
-
-function increment_login_failures(string $username): int {
-  $path = login_failure_path($username);
-  $fh = @fopen($path, 'c+');
-  if ($fh === false) {
-    return 1;
-  }
-  if (!flock($fh, LOCK_EX)) {
-    fclose($fh);
-    return 1;
-  }
-  $raw = stream_get_contents($fh);
-  $count = 0;
-  if ($raw !== false && $raw !== '') {
-    $data = json_decode($raw, true);
-    if (is_array($data)) {
-      $count = (int)($data['count'] ?? 0);
-    }
-  }
-  $count++;
-  ftruncate($fh, 0);
-  rewind($fh);
-  fwrite($fh, json_encode(['count' => $count]));
-  fflush($fh);
-  flock($fh, LOCK_UN);
-  fclose($fh);
-  return $count;
-}
-
-function clear_login_failures(string $username): void {
-  $path = login_failure_path($username);
-  if (is_file($path)) {
-    @unlink($path);
-  }
 }
 
 function require_auth(): void {
@@ -179,6 +131,7 @@ try {
   }
 
   $pdo = get_pdo();
+  $authenticatedUser = apiary_refresh_authenticated_user($pdo);
 
   if ($route['roles'] !== null) {
     require_auth();
@@ -193,15 +146,7 @@ try {
   $payload = $_SERVER['REQUEST_METHOD'] === 'POST' ? request_payload() : [];
 
   if ($action === 'me') {
-    $user = null;
-    if (!empty($_SESSION['user_id'])) {
-      $user = [
-        'id' => (int)$_SESSION['user_id'],
-        'username' => $_SESSION['username'] ?? null,
-        'role' => $_SESSION['role'] ?? null
-      ];
-    }
-    respond(['user' => $user, 'csrf' => csrf_token()]);
+    respond(['user' => $authenticatedUser, 'csrf' => csrf_token()]);
   }
 
   if ($action === 'admin_bootstrap_status') {
@@ -253,22 +198,37 @@ try {
     $stmt->execute(['username' => $username]);
     $user = $stmt->fetch();
     $hash = $user['password_hash'] ?? null;
-    if (!$user || $hash === null || $hash === '' || !password_verify($password, (string)$hash)) {
-      if ($user) {
-        $count = increment_login_failures($user['username']);
-        if ($count >= 3 && $hash !== null && $hash !== '') {
-          $lock = $pdo->prepare("UPDATE Users SET password_hash = NULL WHERE id = :id");
-          $lock->execute(['id' => (int)$user['id']]);
-        }
-      }
+    $rateKeys = login_rate_keys(
+      $user ? (string)$user['username'] : strtolower($username),
+      login_client_ip()
+    );
+    try {
+      $loginResult = process_login_attempt($pdo, $rateKeys, function () use ($user, $hash, $password) {
+        $verificationHash = is_string($hash) && $hash !== ''
+          ? $hash
+          : LOGIN_DUMMY_PASSWORD_HASH;
+        $passwordMatches = password_verify($password, $verificationHash);
+        return (bool)$user && is_string($hash) && $hash !== '' && $passwordMatches;
+      });
+    } catch (Throwable $exception) {
+      error_log('Login rate limiter failed: ' . $exception->getMessage());
+      header('Retry-After: 60');
+      respond(['error' => 'Login temporarily unavailable'], 503);
+    }
+
+    if ($loginResult['status'] === 'blocked') {
+      header('Retry-After: ' . $loginResult['retry_after']);
+      respond(['error' => 'Too many login attempts. Try again later.'], 429);
+    }
+    if ($loginResult['status'] !== 'valid') {
       respond(['error' => 'Invalid credentials'], 401);
     }
 
-    clear_login_failures($user['username']);
     session_regenerate_id(true);
     $_SESSION['user_id'] = (int)$user['id'];
     $_SESSION['username'] = $user['username'];
     $_SESSION['role'] = $user['role'];
+    $_SESSION['password_fingerprint'] = apiary_password_fingerprint((string)$hash);
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
     $pdo->prepare("UPDATE Users SET last_login = NOW() WHERE id = :id")
         ->execute(['id' => (int)$user['id']]);
@@ -315,6 +275,7 @@ try {
     $hash = password_hash($next, PASSWORD_DEFAULT);
     $upd = $pdo->prepare("UPDATE Users SET password_hash = :hash WHERE id = :id");
     $upd->execute(['hash' => $hash, 'id' => (int)$user['id']]);
+    $_SESSION['password_fingerprint'] = apiary_password_fingerprint($hash);
 
     respond(['ok' => true]);
   }

@@ -1,0 +1,22 @@
+Options -Indexes
+DirectoryIndex index.html
+
+# Protect environment files, repository metadata, tests, and database dumps.
+<FilesMatch "^(\.env(?:\..*)?|\.git|\.htaccess|Apiary scheme\.sql)$">
+  Require all denied
+</FilesMatch>
+
+RewriteEngine On
+RewriteRule ^(?:\.git|\.agents|\.codex|tests|migrations)(?:/|$) - [F,L]
+
+# The browser only needs the public API entry point. Keep implementation PHP
+# files server-side so they cannot be downloaded or executed directly.
+<FilesMatch "\.php$">
+  Require all denied
+</FilesMatch>
+<Files "api.php">
+  Require all granted
+</Files>
+<Files "charts.php">
+  Require all granted
+</Files>

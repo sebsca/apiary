@@ -12,6 +12,7 @@ const app = document.getElementById('app');
 const tabStandorte = document.getElementById('tab-standorte');
 const tabHives = document.getElementById('tab-hives');
 const tabMovements = document.getElementById('tab-movements');
+const tabCharts = document.getElementById('tab-charts');
 const tabQueens = document.getElementById('tab-queens');
 const authStatus = document.getElementById('auth-status');
 const authAdmin = document.getElementById('auth-admin');
@@ -325,6 +326,7 @@ function setActiveTab(path) {
     [tabStandorte, path === '/' || path.startsWith('/standort') || path.startsWith('/visit')],
     [tabHives, path.startsWith('/hive')],
     [tabMovements, path.startsWith('/movements')],
+    [tabCharts, path.startsWith('/charts')],
     [tabQueens, path.startsWith('/queens') || path.startsWith('/queen')]
   ];
   tabs.forEach(([tab, active]) => {
@@ -532,6 +534,18 @@ async function renderHiveMovements() {
   if (chartAvailable) {
     renderSankeyChart(document.getElementById('sankey-chart'), data);
   }
+}
+
+function renderCharts() {
+  setActiveTab('/charts');
+  app.innerHTML = card('Hive Monitoring', null, `
+    <iframe
+      class="charts-frame"
+      src="charts.php"
+      title="Hive weight and outside temperature charts"
+      loading="eager"
+    ></iframe>
+  `);
 }
 
 async function renderQueens() {
@@ -2038,6 +2052,7 @@ async function router() {
   if (path === '/' || path === '//') return renderStandorte();
   if (path === '/hives') return renderHives();
   if (path === '/movements') return renderHiveMovements();
+  if (path === '/charts') return renderCharts();
   if (path === '/queens') return renderQueens();
   if (path === '/login') return renderLogin(r);
   if (path === '/account') return renderAccount();
