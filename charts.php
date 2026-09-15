@@ -12,8 +12,8 @@ if ($authenticatedUser === null) {
         echo json_encode(['error' => 'Unauthorized']);
     } else {
         header('Content-Type: text/html; charset=utf-8');
-        echo '<!doctype html><html lang="de"><meta charset="utf-8"><title>Anmeldung erforderlich</title>' .
-            '<body><p role="alert">Bitte melde dich an, um die Diagramme anzuzeigen.</p></body></html>';
+        echo '<!doctype html><html lang="en"><meta charset="utf-8"><title>Sign-in required</title>' .
+            '<body><p role="alert">Please sign in to view the charts.</p></body></html>';
     }
     exit;
 }
@@ -21,23 +21,23 @@ session_write_close();
 
 $token = trim((string)(getenv('HIVEMONITORING_API_TOKEN') ?: ''));
 if ($token === '') {
-    throw new RuntimeException('HiveMonitoring API token fehlt.');
+    throw new RuntimeException('HiveMonitoring API token is missing.');
 }
 $baseUrl = 'https://main.beehivemonitoring.com';
 $ranges = [
-    '5y' => ['label' => '5 Jahre', 'interval' => 'P5Y', 'title' => 'letzte 5 Jahre'],
-    '1y' => ['label' => '1 Jahr', 'interval' => 'P1Y', 'title' => 'letztes Jahr'],
-    '1m' => ['label' => '1 Monat', 'interval' => 'P1M', 'title' => 'letzter Monat'],
-    '1w' => ['label' => '1 Woche', 'interval' => 'P7D', 'title' => 'letzte Woche'],
-    '1d' => ['label' => '1 Tag', 'interval' => 'P1D', 'title' => 'letzter Tag']
+    '5y' => ['label' => '5 years', 'interval' => 'P5Y', 'title' => 'last 5 years'],
+    '1y' => ['label' => '1 year', 'interval' => 'P1Y', 'title' => 'last year'],
+    '1m' => ['label' => '1 month', 'interval' => 'P1M', 'title' => 'last month'],
+    '1w' => ['label' => '1 week', 'interval' => 'P7D', 'title' => 'last week'],
+    '1d' => ['label' => '1 day', 'interval' => 'P1D', 'title' => 'last day']
 ];
 $range = isset($_GET['range']) && is_string($_GET['range']) && isset($ranges[$_GET['range']])
-    ? $_GET['range'] : '1m';
+    ? $_GET['range'] : '1w';
 $now = new DateTimeImmutable('now', new DateTimeZone('UTC'));
 $fromMs = $now->sub(new DateInterval($ranges[$range]['interval']))->getTimestamp() * 1000;
 $toMs = $now->getTimestamp() * 1000;
 $historyFromMs = $now->sub(new DateInterval('P5Y'))->getTimestamp() * 1000;
-// Fünf-Minuten-Messungen plus Reserve; volle Seiten werden weiter abgefragt.
+// Five-minute measurements plus a buffer; full pages are fetched continuously.
 $limit = min(10000, max(500, (int)ceil(($toMs - $fromMs) / 300000) + 100));
 
 header('Content-Type: text/html; charset=utf-8');
@@ -46,7 +46,7 @@ header('Cache-Control: private, no-store');
 function chartsApiGet($url, $token)
 {
     if (!function_exists('curl_init')) {
-        throw new RuntimeException('Die PHP-Erweiterung cURL fehlt.');
+        throw new RuntimeException('The PHP cURL extension is missing.');
     }
 
     $ch = curl_init($url);
@@ -61,15 +61,15 @@ function chartsApiGet($url, $token)
     curl_close($ch);
 
     if ($response === false) {
-        throw new RuntimeException('HiveMonitoring ist zurzeit nicht erreichbar.');
+        throw new RuntimeException('HiveMonitoring is currently unavailable.');
     }
     if ($httpCode !== 200) {
-        throw new RuntimeException('HiveMonitoring API Fehler: HTTP ' . $httpCode);
+        throw new RuntimeException('HiveMonitoring API error: HTTP ' . $httpCode);
     }
 
     $data = json_decode($response, true);
     if (json_last_error() !== JSON_ERROR_NONE || !is_array($data)) {
-        throw new RuntimeException('HiveMonitoring hat keine gültigen JSON-Daten geliefert.');
+        throw new RuntimeException('HiveMonitoring returned invalid JSON data.');
     }
     return $data;
 }
@@ -105,7 +105,7 @@ function chartsHivePoints($baseUrl, $token, $hiveId, $fromMs, $toMs, $limit, $ra
     $firstPoints = ['weight' => null, 'temperature' => null];
     $lastPoints = ['weight' => null, 'temperature' => null];
     $attributes = ['weight' => ['weight', 2], 'tempOut' => ['temperature', 1]];
-    // Lange Zeiträume kompakt zeichnen; Minima und Maxima bleiben erhalten.
+    // Render long time ranges compactly while preserving minimum and maximum values.
     $bucketMs = in_array($range, ['5y', '1y'], true)
         ? max(1, (int)ceil(($toMs - $fromMs) / 750)) : 0;
     do {
@@ -164,7 +164,7 @@ function chartsHivePoints($baseUrl, $token, $hiveId, $fromMs, $toMs, $limit, $ra
         $hasMore = count($rows) >= $limit;
         unset($rows);
         if ($hasMore && ($latestMs === null || $latestMs < $cursor)) {
-            throw new RuntimeException('Die historischen Daten konnten nicht vollständig geladen werden.');
+            throw new RuntimeException('The historical data could not be loaded completely.');
         }
         $cursor = ($latestMs ?? $toMs) + 1;
     } while ($hasMore && $cursor <= $toMs);
@@ -186,7 +186,7 @@ function chartsHivePoints($baseUrl, $token, $hiveId, $fromMs, $toMs, $limit, $ra
     return $points;
 }
 
-// Liefert ausschließlich unverdichtete Rohdaten für einen bereits autorisierten Chart.
+// Returns only uncompressed raw data for an already authorized chart.
 if (isset($_GET['data'])) {
     header('Content-Type: application/json; charset=utf-8');
     header('Cache-Control: private, no-store');
@@ -198,7 +198,7 @@ if (isset($_GET['data'])) {
         if ($hiveId === '' || !hash_equals(hash_hmac('sha256', $hiveId, $token), $signature) ||
             $requestedFrom === false || $requestedTo === false || $requestedFrom >= $requestedTo ||
             $requestedFrom < 0 || $requestedTo - $requestedFrom > 5 * 366 * 86400000) {
-            throw new InvalidArgumentException('Ungültiger Datenbereich.');
+            throw new InvalidArgumentException('Invalid data range.');
         }
         $detailLimit = min(10000, max(
             500, (int)ceil(($requestedTo - $requestedFrom) / 300000) + 100
@@ -234,7 +234,7 @@ try {
         }
         $seenHives[$hiveId] = true;
         $name = isset($hive['name']) && is_scalar($hive['name']) ? trim((string)$hive['name']) : '';
-        $name = $name !== '' ? $name : 'Bienenstock ' . $hiveId;
+        $name = $name !== '' ? $name : 'Hive ' . $hiveId;
         try {
             $points = chartsHivePoints($baseUrl, $token, $hiveId, $fromMs, $toMs, $limit, $range);
             if ($points['weight']) {
@@ -247,7 +247,7 @@ try {
                 ];
             }
         } catch (RuntimeException $exception) {
-            // Ein fehlerhafter Bienenstock verhindert nicht die anderen Diagramme.
+            // A faulty hive does not prevent the other charts from loading.
             $errors[] = $name . ': ' . $exception->getMessage();
         }
     }
@@ -259,11 +259,11 @@ if (!$charts && $errors) {
 }
 ?>
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Gewicht und Außentemperatur der Bienenstöcke – ApexCharts</title>
+    <title>Hive weight and outside temperature – ApexCharts</title>
     <style>
         html, body { margin: 0; padding: 0; background: transparent; }
         body { font-family: system-ui, sans-serif; color: #27313b; }
@@ -293,8 +293,8 @@ if (!$charts && $errors) {
 </head>
 <body>
 <main id="chart-container">
-    <h1 id="chart-title">Gewicht und Außentemperatur – <?= $ranges[$range]['title'] ?></h1>
-    <form class="ranges" method="get" aria-label="Zeitraum auswählen">
+    <h1 id="chart-title">Weight and outside temperature – <?= $ranges[$range]['title'] ?></h1>
+    <form class="ranges" method="get" aria-label="Select time range">
         <?php foreach ($ranges as $key => $option): ?>
             <button type="submit" name="range" value="<?= $key ?>" aria-pressed="<?= $range === $key ? 'true' : 'false' ?>"><?= $option['label'] ?></button>
         <?php endforeach; ?>
@@ -303,7 +303,7 @@ if (!$charts && $errors) {
         <p class="notice error" role="alert"><?= htmlspecialchars($error, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></p>
     <?php endforeach; ?>
     <?php if (!$charts && !$errors): ?>
-        <p class="notice" role="status">Keine Gewichtsmessungen im gewählten Zeitraum vorhanden.</p>
+        <p class="notice" role="status">No weight measurements are available for the selected period.</p>
     <?php endif; ?>
     <?php foreach ($charts as $index => $hiveChart): ?>
         <?php
@@ -316,8 +316,8 @@ if (!$charts && $errors) {
             <h2 id="hive-title-<?= $index ?>">
                 <span><?= htmlspecialchars($hiveChart['name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></span>
                 <span class="hive-latest">
-                    Gewicht <?= number_format($latestWeight, 2, ',', '.') ?> kg<?php if ($latestTemperature !== null): ?>
-                        · Außen <?= number_format($latestTemperature, 1, ',', '.') ?> °C<?php endif; ?>
+                    Weight <?= number_format($latestWeight, 2, ',', '.') ?> kg<?php if ($latestTemperature !== null): ?>
+                        · Outside <?= number_format($latestTemperature, 1, ',', '.') ?> °C<?php endif; ?>
                 </span>
             </h2>
             <div id="gewichtChart-<?= $index ?>" class="weight-chart" role="region" aria-labelledby="hive-title-<?= $index ?>"></div>
@@ -325,11 +325,11 @@ if (!$charts && $errors) {
         </section>
     <?php endforeach; ?>
     <?php if ($charts): ?>
-        <noscript><p class="notice">Bitte JavaScript aktivieren, um die Diagramme anzuzeigen.</p></noscript>
+        <noscript><p class="notice">Please enable JavaScript to view the charts.</p></noscript>
     <?php endif; ?>
 </main>
 <?php if ($charts): ?>
-<!-- Feste Version; wie die Vorlage über CDN geladen. Keine Projektabhängigkeiten. -->
+<!-- Pinned version, loaded via CDN like the template. No project dependencies. -->
 <script src="https://cdn.jsdelivr.net/npm/apexcharts@5.3.6/dist/apexcharts.min.js"></script>
 <script>
 (() => {
@@ -374,7 +374,7 @@ if (!$charts && $errors) {
                 formatter.format(new Date(timestamp ?? Number(value)))
         };
     }
-    // Bei langen Zeiträumen entsprechen zwei Verdichtungsintervalle der zulässigen Nähe.
+    // For long time ranges, two aggregation intervals define the permitted proximity.
     const tooltipTolerance = Math.max(30 * 60 * 1000, (toTimestamp - fromTimestamp) / 2000);
     function nearestPoint(points, timestamp) {
         if (!points.length) {
@@ -400,7 +400,7 @@ if (!$charts && $errors) {
             return '';
         }
         const measured = point.x === timestamp ? ''
-            : `<span class="chart-tooltip-measured">Messzeit: ${dateTimeFormat.format(new Date(point.x))}</span>`;
+            : `<span class="chart-tooltip-measured">Measured at: ${dateTimeFormat.format(new Date(point.x))}</span>`;
         return `<span class="chart-tooltip-row">
             <span class="chart-tooltip-dot" style="background:${color}"></span>
             <span>${label}</span><span class="chart-tooltip-value">${formatter(point.y)}</span>
@@ -477,7 +477,7 @@ if (!$charts && $errors) {
     function showError(index) {
         document.getElementById(`gewichtChart-${index}`).hidden = true;
         const notice = document.getElementById(`chart-error-${index}`);
-        notice.textContent = 'Das Diagramm konnte nicht geladen werden. Bitte die Verbindung prüfen und die Seite neu laden.';
+        notice.textContent = 'The chart could not be loaded. Please check your connection and reload the page.';
         notice.hidden = false;
     }
     if (typeof window.ApexCharts !== 'function') {
@@ -490,7 +490,7 @@ if (!$charts && $errors) {
         let weightPoints = overviewWeightPoints;
         let temperaturePoints = overviewTemperaturePoints;
         const hasTemperature = temperaturePoints.length > 0;
-        const series = [{ name: 'Gewicht', data: weightPoints }];
+        const series = [{ name: 'Weight', data: weightPoints }];
         let scaleTimer;
         let loadTimer;
         let requestVersion = 0;
@@ -531,8 +531,8 @@ if (!$charts && $errors) {
                 ? visibleRange(temperaturePoints, minX, maxX) ?? fullTemperatureRange
                 : null;
             const axes = [{
-                seriesName: 'Gewicht',
-                title: { text: 'Gewicht (kg)' },
+                seriesName: 'Weight',
+                title: { text: 'Weight (kg)' },
                 decimalsInFloat: 0,
                 labels: {
                     formatter: value => {
@@ -549,8 +549,8 @@ if (!$charts && $errors) {
                     temperatureMin + 5, Math.ceil(temperatureRange.max / 5) * 5
                 );
                 axes.push({
-                    seriesName: 'Außentemperatur', opposite: true,
-                    title: { text: 'Außentemperatur (°C)' },
+                    seriesName: 'Outside temperature', opposite: true,
+                    title: { text: 'Outside temperature (°C)' },
                     decimalsInFloat: 0,
                     labels: { formatter: value => axisFormat.format(value) + ' °C' },
                     min: temperatureMin,
@@ -632,9 +632,9 @@ if (!$charts && $errors) {
             temperaturePoints = renderedPoints(
                 overviewTemperaturePoints, rawPoints.temperature, minX, maxX
             );
-            const updatedSeries = [{ name: 'Gewicht', data: weightPoints }];
+            const updatedSeries = [{ name: 'Weight', data: weightPoints }];
             if (hasTemperature) {
-                updatedSeries.push({ name: 'Außentemperatur', data: temperaturePoints });
+                updatedSeries.push({ name: 'Outside temperature', data: temperaturePoints });
             }
             clearTimeout(scaleTimer);
             guardChartUpdate();
@@ -711,7 +711,7 @@ if (!$charts && $errors) {
                 applyRawDetails(chartContext, visibleFrom, visibleTo);
             } catch (error) {
                 if (error.name !== 'AbortError' && version === requestVersion) {
-                    detailNotice('Detaildaten konnten nicht nachgeladen werden; die Übersicht bleibt sichtbar.');
+                    detailNotice('Detailed data could not be loaded; the overview remains visible.');
                 }
             }
         }
@@ -747,9 +747,9 @@ if (!$charts && $errors) {
             requestVersion += 1;
             weightPoints = overviewWeightPoints;
             temperaturePoints = overviewTemperaturePoints;
-            const overviewSeries = [{ name: 'Gewicht', data: weightPoints }];
+            const overviewSeries = [{ name: 'Weight', data: weightPoints }];
             if (hasTemperature) {
-                overviewSeries.push({ name: 'Außentemperatur', data: temperaturePoints });
+                overviewSeries.push({ name: 'Outside temperature', data: temperaturePoints });
             }
             clearTimeout(scaleTimer);
             guardChartUpdate();
@@ -765,7 +765,7 @@ if (!$charts && $errors) {
             }, false, false, false).catch(() => showError(index));
         }
         if (hasTemperature) {
-            series.push({ name: 'Außentemperatur', data: temperaturePoints });
+            series.push({ name: 'Outside temperature', data: temperaturePoints });
         }
         try {
             const chart = new ApexCharts(document.getElementById(`gewichtChart-${index}`), {
@@ -833,8 +833,8 @@ if (!$charts && $errors) {
                         const temperature = nearestPoint(temperaturePoints, timestamp);
                         return `<div class="chart-tooltip">
                             <div class="chart-tooltip-date">${dateTimeFormat.format(new Date(timestamp))}</div>
-                            ${tooltipRow('Gewicht', weight, '#277b9b', value => weightFormat.format(value) + ' kg', timestamp)}
-                            ${tooltipRow('Außentemperatur', temperature, '#e67e22', value => temperatureFormat.format(value) + ' °C', timestamp)}
+                            ${tooltipRow('Weight', weight, '#277b9b', value => weightFormat.format(value) + ' kg', timestamp)}
+                            ${tooltipRow('Outside temperature', temperature, '#e67e22', value => temperatureFormat.format(value) + ' °C', timestamp)}
                         </div>`;
                     }
                 }

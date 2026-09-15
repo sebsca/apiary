@@ -862,19 +862,32 @@ body[data-route^="hive-"][data-route$="-new-visit"] .container {
 
 /* Queen overview: preserve the conventional five-year marking palette. */
 .queens-table th:nth-child(1) {
-  width: 42%;
+  width: 37%;
 }
 
 .queens-table th:nth-child(2) {
-  width: 20%;
+  width: 17%;
 }
 
 .queens-table th:nth-child(3) {
-  width: 38%;
+  width: 16%;
 }
 
-.queens-table tbody tr td {
+.queens-table th:nth-child(4) {
+  width: 30%;
+}
+
+.queens-table tbody tr td:first-child {
   border-left: 4px solid transparent;
+}
+
+.queens-table td.queen-daughters,
+.queens-table td.queen-location {
+  text-align: right;
+}
+
+.queen-daughters {
+  font-variant-numeric: tabular-nums;
 }
 
 .queens-table tbody tr.queen-year-0 td {

@@ -442,7 +442,7 @@ try {
   if ($action === 'queen_options') {
     $sql = "SELECT ID, Lebensnummer, Geburtsjahr, gezeichnet, Rasse
             FROM Queens
-            ORDER BY ID DESC";
+            ORDER BY Geburtsjahr DESC, ID DESC";
     $rows = $pdo->query($sql)->fetchAll();
     respond(['queens' => $rows]);
   }

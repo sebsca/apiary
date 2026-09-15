@@ -406,7 +406,7 @@ async function renderHives() {
   const hives = data.hives || [];
   const renderHiveRows = hiveRows => hiveRows.map(hive => {
     const queen = hive.queen_id
-      ? `${htmlesc(hive.queen_id)} · ${htmlesc(hive.queen_breed || '—')} · ${htmlesc(hive.queen_birth_year || '—')}`
+      ? `<a class="table-record-link" href="#/queens?id=${encodeURIComponent(hive.queen_id)}" data-navigate="#/queens?id=${encodeURIComponent(hive.queen_id)}">${htmlesc(hive.queen_id)}</a> · ${htmlesc(hive.queen_breed || '—')} · ${htmlesc(hive.queen_birth_year || '—')}`
       : '—';
     const route = `#/hive/${encodeURIComponent(hive.Hive_ID)}`;
     return `
@@ -548,12 +548,13 @@ function renderCharts() {
   `);
 }
 
-async function renderQueens() {
+async function renderQueens(queenFilterId = '', motherFilterId = '') {
   setActiveTab('/queens');
   const sortOptions = {
-    birth: { label: 'Geburtsjahr + ID', defaultAscending: false },
+    birth: { label: 'Birth year + ID', defaultAscending: false },
     id: { label: 'ID', defaultAscending: false },
-    location: { label: 'Standort + Hive_nr', defaultAscending: true, alignRight: true }
+    daughters: { label: 'Daughters', defaultAscending: false, alignRight: true },
+    location: { label: 'Location + hive number', defaultAscending: true, alignRight: true }
   };
   let activeSort = 'birth';
   let ascending = sortOptions[activeSort].defaultAscending;
@@ -570,20 +571,35 @@ async function renderQueens() {
   app.innerHTML = card('Queens', null, tableScrollHtml('Queens', `
     <table class="table queens-table" aria-label="Queens">
       ${sortHeader}
-      <tbody><tr><td colspan="3">${loadingStateHtml('Loading queens…')}</td></tr></tbody>
+      <tbody><tr><td colspan="4">${loadingStateHtml('Loading queens…')}</td></tr></tbody>
     </table>
   `));
   const data = await apiGet({ action:'queens' });
   const queens = data.queens || [];
   const queenIds = new Set(queens.map(queen => String(queen.ID)));
-  let queenFilterId = '';
   const canEdit = canWrite();
   const strong = v => (v ? `<strong>${htmlesc(v)}</strong>` : '');
   const joinParts = parts => parts.filter(p => p && String(p).length > 0).join(' · ');
+  const daughterCounts = queens.reduce((counts, daughter) => {
+    const mother = String(daughter.LN_Mutter ?? '').trim();
+    if (mother) counts.set(mother, (counts.get(mother) || 0) + 1);
+    return counts;
+  }, new Map());
+  const daughterCount = queen => [...new Set([String(queen.ID), String(queen.Lebensnummer ?? '').trim()].filter(Boolean))]
+    .reduce((total, mother) => total + (daughterCounts.get(mother) || 0), 0);
+  const daughterLink = queen => {
+    const count = daughterCount(queen);
+    const route = `#/queens?mother=${encodeURIComponent(queen.ID)}`;
+    return count ? `<a class="table-record-link" href="${route}" data-navigate="${route}" aria-label="Filter table to ${count} daughters of queen ${htmlesc(queen.ID)}">${count}</a>` : '';
+  };
+  const selectedMother = queens.find(queen => String(queen.ID) === motherFilterId);
+  const selectedMotherKeys = new Set(selectedMother
+    ? [String(selectedMother.ID), String(selectedMother.Lebensnummer ?? '').trim()].filter(Boolean)
+    : []);
   const motherReference = value => {
     const motherId = String(value ?? '').trim();
     if (!motherId || !queenIds.has(motherId)) return htmlesc(value || '');
-    return `<button type="button" class="table-record-link queen-filter-link" data-queen-filter-id="${htmlesc(motherId)}" aria-label="Filter table to mother queen ${htmlesc(motherId)}">${htmlesc(motherId)}</button>`;
+    return `<a class="table-record-link queen-filter-link" href="#/queens?id=${encodeURIComponent(motherId)}" data-navigate="#/queens?id=${encodeURIComponent(motherId)}" aria-label="Filter table to mother queen ${htmlesc(motherId)}">${htmlesc(motherId)}</a>`;
   };
   const queenYearClass = year => {
     const digit = Number.parseInt(String(year ?? '').slice(-1), 10);
@@ -604,10 +620,12 @@ async function renderQueens() {
   const sortValues = {
     birth: queen => [queen.Geburtsjahr, queen.ID],
     id: queen => [queen.ID],
-    location: queen => [queen.Standort, queen.Hive_nr]
+    location: queen => [queen.Standort, queen.Hive_nr],
+    daughters: queen => [daughterCount(queen)]
   };
   const sortQueens = (key, sortAscending) => [...queens]
-    .filter(queen => !queenFilterId || String(queen.ID) === queenFilterId)
+    .filter(queen => (!queenFilterId || String(queen.ID) === queenFilterId)
+      && (!motherFilterId || selectedMotherKeys.has(String(queen.LN_Mutter ?? '').trim())))
     .sort((left, right) => {
       const valueGetter = sortValues[key] || sortValues.birth;
       const leftValues = valueGetter(left);
@@ -639,29 +657,25 @@ async function renderQueens() {
     const route = `#/queen/${encodeURIComponent(q.ID)}`;
     return `
     <tr class="${queenYearClass(q.Geburtsjahr)}" data-navigate="${route}">
-      <td colspan="3">
+      <td colspan="2">
         <div class="vstack stack-tight">
-          <div class="qline">
-            <div class="qleft">${joinParts([
+          <div>${joinParts([
               `<a class="table-record-link" href="${route}" aria-label="Open queen ${htmlesc(q.ID)}"><strong>${htmlesc(q.ID)}</strong></a>`,
               htmlesc(q.Rasse || ''),
               htmlesc(q.gezeichnet || ''),
               htmlesc(q.Lebensnummer || ''),
               htmlesc(q.Belegstelle || ''),
             ])}</div>
-            <div class="qright">${strong(q.Hive_nr || '')}</div>
-          </div>
-          <div class="qline muted">
-            <div class="qleft">${joinParts([
+          <div class="muted">${joinParts([
               htmlesc(q.Geburtsjahr || ''),
               htmlesc(q.Zuechter || ''),
               motherReference(q.LN_Mutter),
               htmlesc(q.LN_Vatermutter || ''),
             ])}</div>
-            <div class="qright">${strong(q.Standort || '')}</div>
-          </div>
         </div>
       </td>
+      <td class="queen-daughters">${daughterLink(q)}</td>
+      <td class="queen-location"><div>${strong(q.Hive_nr || '')}</div><div class="muted">${strong(q.Standort || '')}</div></td>
     </tr>
   `;
   }).join('');
@@ -674,7 +688,7 @@ async function renderQueens() {
     ${tableScrollHtml('Queens', `
       <table class="table queens-table" aria-label="Queens">
         ${sortHeader}
-        <tbody id="queens-table-body">${renderQueenRows(sortQueens(activeSort, ascending)) || tableEmptyRow('No queens found.', 3)}</tbody>
+        <tbody id="queens-table-body">${renderQueenRows(sortQueens(activeSort, ascending)) || tableEmptyRow('No queens found.', 4)}</tbody>
       </table>
     `)}
   `);
@@ -683,23 +697,14 @@ async function renderQueens() {
   const filterBar = document.getElementById('queen-filter-bar');
   const filterLabel = document.getElementById('queen-filter-label');
   const sortButtons = [...app.querySelectorAll('[data-queen-sort]')];
-  const renderFilteredQueens = (focusResult = false) => {
+  const renderFilteredQueens = () => {
     tableBody.innerHTML = renderQueenRows(sortQueens(activeSort, ascending))
-      || tableEmptyRow('No queens found.', 3);
-    filterBar.hidden = !queenFilterId;
-    filterLabel.textContent = queenFilterId ? `Filtered to queen #${queenFilterId}` : '';
-    if (focusResult) {
-      tableBody.querySelector('.table-record-link[href]')?.focus();
-    }
+      || tableEmptyRow('No queens found.', 4);
+    filterBar.hidden = !queenFilterId && !motherFilterId;
+    filterLabel.textContent = motherFilterId
+      ? `Filtered to daughters of queen #${motherFilterId}`
+      : (queenFilterId ? `Filtered to queen #${queenFilterId}` : '');
   };
-  tableBody.addEventListener('click', event => {
-    const reference = event.target.closest('[data-queen-filter-id]');
-    if (!reference) return;
-    event.preventDefault();
-    event.stopPropagation();
-    queenFilterId = reference.dataset.queenFilterId;
-    renderFilteredQueens(true);
-  });
   const updateSortIndicators = () => {
     sortButtons.forEach(sortButton => {
       const isActive = sortButton.dataset.queenSort === activeSort;
@@ -721,6 +726,7 @@ async function renderQueens() {
       updateSortIndicators();
     });
   });
+  renderFilteredQueens();
   updateSortIndicators();
 }
 
@@ -831,7 +837,7 @@ function queenFormHtml({ q, mode='update', readOnly=false }) {
 
       <div class="field">
         <label for="queen-mating-station">Mating station</label>
-        <input id="queen-mating-station" name="Belegstelle" value="${htmlesc(q.Belegstelle || '')}" placeholder="Belegstelle"/>
+        <input id="queen-mating-station" name="Belegstelle" value="${htmlesc(q.Belegstelle || '')}" placeholder="Mating station"/>
       </div>
     </fieldset>
 
@@ -902,7 +908,7 @@ async function renderStandortDetail(standort) {
             <span class="location-hive-slot-label sr-only">Queen</span>
             <span>
               ${h.Queen_ID
-                ? `<span>Q ${htmlesc(h.Queen_ID)}</span>${queenDetails ? `<span class="location-hive-queen-details"> · ${queenDetails}</span>` : ''}`
+                ? `<a class="table-record-link" href="#/queens?id=${encodeURIComponent(h.Queen_ID)}" data-navigate="#/queens?id=${encodeURIComponent(h.Queen_ID)}">Q ${htmlesc(h.Queen_ID)}</a>${queenDetails ? `<span class="location-hive-queen-details"> · ${queenDetails}</span>` : ''}`
                 : (queenDetails || '<span class="location-hive-empty">—</span>')}
             </span>
           </div>
@@ -1061,8 +1067,8 @@ async function renderHive(hiveId) {
     : '';
   const hiveSubtitle = [
     `Queen: ${queenSummary || '—'}`,
-    `Züchter: ${latestVisit?.queen_breeder || '—'}`,
-    `Belegstelle: ${latestVisit?.queen_belegstelle || '—'}`
+    `Breeder: ${latestVisit?.queen_breeder || '—'}`,
+    `Mating station: ${latestVisit?.queen_belegstelle || '—'}`
   ].join('\n');
 
   const displayValue = value => (
@@ -1185,7 +1191,7 @@ async function renderHive(hiveId) {
     `)}
     <div class="hstack hive-visits-pagination" id="hive-visits-pagination" ${hasMoreVisits ? '' : 'hidden'}>
       <span class="muted" id="hive-visits-load-status" role="status" aria-live="polite"></span>
-      <button type="button" class="btn" id="hive-visits-load-more">Weitere laden</button>
+      <button type="button" class="btn" id="hive-visits-load-more">Load more</button>
     </div>
   `);
 
@@ -1208,7 +1214,7 @@ async function renderHive(hiveId) {
   });
   loadMoreButton.addEventListener('click', async () => {
     loadMoreButton.disabled = true;
-    loadMoreButton.textContent = 'Lädt…';
+    loadMoreButton.textContent = 'Loading…';
     loadStatus.textContent = '';
     try {
       const moreData = await apiGet({
@@ -1223,16 +1229,16 @@ async function renderHive(hiveId) {
       visitsBody.innerHTML = renderVisitRows(sortVisits(visitsAscending))
         || tableEmptyRow('No visits yet.', 2);
       loadStatus.textContent = newVisits.length === 1
-        ? '1 weiterer Visit geladen.'
-        : `${newVisits.length} weitere Visits geladen.`;
+        ? '1 more visit loaded.'
+        : `${newVisits.length} more visits loaded.`;
       pagination.hidden = false;
       loadMoreButton.hidden = !hasMoreVisits;
     } catch (error) {
       if (error.name === 'AbortError') return;
-      loadStatus.textContent = `Weitere Visits konnten nicht geladen werden: ${error.message}`;
+      loadStatus.textContent = `More visits could not be loaded: ${error.message}`;
     } finally {
       loadMoreButton.disabled = false;
-      loadMoreButton.textContent = 'Weitere laden';
+      loadMoreButton.textContent = 'Load more';
     }
   });
   updateVisitSortIndicator();
@@ -1458,7 +1464,7 @@ function visitFormHtml({ mode, hiveId, visitId, visit, queens, readOnly=false })
 
       <div class="field">
         <label for="visit-location">Location</label>
-        <input id="visit-location" name="Standort" value="${htmlesc(visit.Standort || '')}" placeholder="e.g., Garten, Waldstand, …"/>
+        <input id="visit-location" name="Standort" value="${htmlesc(visit.Standort || '')}" placeholder="e.g., garden, woodland apiary, …"/>
       </div>
 
       <div class="field">
@@ -1494,8 +1500,8 @@ function visitFormHtml({ mode, hiveId, visitId, visit, queens, readOnly=false })
       </div>
 
       <div class="field">
-        <label for="visit-queen-status">Queen status (e.g., da, nicht gesehen, weisellos)</label>
-        <input id="visit-queen-status" name="Koenigin_status" value="${htmlesc(visit.Koenigin_status || '')}" placeholder="da / …"/>
+        <label for="visit-queen-status">Queen status (e.g., present, not seen, queenless)</label>
+        <input id="visit-queen-status" name="Koenigin_status" value="${htmlesc(visit.Koenigin_status || '')}" placeholder="present / …"/>
       </div>
 
       <div class="field">
@@ -2053,7 +2059,7 @@ async function router() {
   if (path === '/hives') return renderHives();
   if (path === '/movements') return renderHiveMovements();
   if (path === '/charts') return renderCharts();
-  if (path === '/queens') return renderQueens();
+  if (path === '/queens') return renderQueens(r.query.get('id') || '', r.query.get('mother') || '');
   if (path === '/login') return renderLogin(r);
   if (path === '/account') return renderAccount();
   if (path === '/admin') {
