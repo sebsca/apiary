@@ -415,7 +415,7 @@ try {
 
     $sql = latest_visits_cte() . ",
       active_queen_locations AS (
-        SELECT l.Queen_ID, h.Hive_nr, l.Standort
+        SELECT l.Queen_ID, l.Hive_ID, h.Hive_nr, l.Standort
         FROM latest l
         JOIN Hives h ON h.ID = l.Hive_ID
         WHERE l.rn = 1 AND h.inactive = 0
@@ -429,6 +429,7 @@ try {
              q.LN_Mutter,
              q.LN_Vatermutter,
              q.Belegstelle,
+             aql.Hive_ID,
              aql.Hive_nr,
              aql.Standort
       FROM Queens q

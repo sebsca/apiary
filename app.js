@@ -370,7 +370,7 @@ async function renderStandorte() {
     const route = `#/standort/${encodeURIComponent(r.Standort)}`;
     return `
     <tr data-navigate="${route}">
-      <th scope="row"><a class="table-record-link" href="${route}">${htmlesc(r.Standort)}</a></th>
+      <th scope="row"><span class="text-emphasis">${htmlesc(r.Standort)}</span></th>
       <td>${htmlesc(r.active_hives)}</td>
       <td>${r.todo_hives > 0 ? htmlesc(r.todo_hives) : ''}</td>
     </tr>
@@ -411,7 +411,7 @@ async function renderHives() {
     const route = `#/hive/${encodeURIComponent(hive.Hive_ID)}`;
     return `
       <tr data-navigate="${route}">
-        <th scope="row"><a class="table-record-link" href="${route}" aria-label="Open hive ${htmlesc(hive.Hive_nr || hive.Hive_ID)}">${htmlesc(hive.Hive_nr || '—')}</a></th>
+        <th scope="row"><span class="text-emphasis">${htmlesc(hive.Hive_nr || '—')}</span></th>
         <td>${htmlesc(hive.Standort || '—')}</td>
         <td>${htmlesc(fmtDate(hive.last_visit_date))}</td>
         <td>${queen}</td>
@@ -578,7 +578,7 @@ async function renderQueens(queenFilterId = '', motherFilterId = '') {
   const queens = data.queens || [];
   const queenIds = new Set(queens.map(queen => String(queen.ID)));
   const canEdit = canWrite();
-  const strong = v => (v ? `<strong>${htmlesc(v)}</strong>` : '');
+  const locationValue = v => (v ? `<span class="text-emphasis">${htmlesc(v)}</span>` : '');
   const joinParts = parts => parts.filter(p => p && String(p).length > 0).join(' · ');
   const daughterCounts = queens.reduce((counts, daughter) => {
     const mother = String(daughter.LN_Mutter ?? '').trim();
@@ -599,7 +599,15 @@ async function renderQueens(queenFilterId = '', motherFilterId = '') {
   const motherReference = value => {
     const motherId = String(value ?? '').trim();
     if (!motherId || !queenIds.has(motherId)) return htmlesc(value || '');
-    return `<a class="table-record-link queen-filter-link" href="#/queens?id=${encodeURIComponent(motherId)}" data-navigate="#/queens?id=${encodeURIComponent(motherId)}" aria-label="Filter table to mother queen ${htmlesc(motherId)}">${htmlesc(motherId)}</a>`;
+    return `<a class="table-record-link" href="#/queens?id=${encodeURIComponent(motherId)}" data-navigate="#/queens?id=${encodeURIComponent(motherId)}" aria-label="Filter table to mother queen ${htmlesc(motherId)}">${htmlesc(motherId)}</a>`;
+  };
+  const hiveReference = queen => {
+    const hiveId = queen.Hive_ID;
+    const label = queen.Hive_nr || (hiveId ? `Hive #${hiveId}` : '');
+    if (!label) return '';
+    if (!hiveId) return `<span class="text-emphasis">${htmlesc(label)}</span>`;
+    const route = `#/hive/${encodeURIComponent(hiveId)}`;
+    return `<a class="table-record-link text-emphasis" href="${route}" data-navigate="${route}" aria-label="Open hive ${htmlesc(label)}">${htmlesc(label)}</a>`;
   };
   const queenYearClass = year => {
     const digit = Number.parseInt(String(year ?? '').slice(-1), 10);
@@ -660,7 +668,7 @@ async function renderQueens(queenFilterId = '', motherFilterId = '') {
       <td colspan="2">
         <div class="vstack stack-tight">
           <div>${joinParts([
-              `<a class="table-record-link" href="${route}" aria-label="Open queen ${htmlesc(q.ID)}"><strong>${htmlesc(q.ID)}</strong></a>`,
+              `<span class="text-emphasis">${htmlesc(q.ID)}</span>`,
               htmlesc(q.Rasse || ''),
               htmlesc(q.gezeichnet || ''),
               htmlesc(q.Lebensnummer || ''),
@@ -675,7 +683,7 @@ async function renderQueens(queenFilterId = '', motherFilterId = '') {
         </div>
       </td>
       <td class="queen-daughters">${daughterLink(q)}</td>
-      <td class="queen-location"><div>${strong(q.Hive_nr || '')}</div><div class="muted">${strong(q.Standort || '')}</div></td>
+      <td class="queen-location"><div>${hiveReference(q)}</div><div class="muted">${locationValue(q.Standort || '')}</div></td>
     </tr>
   `;
   }).join('');
@@ -931,10 +939,10 @@ async function renderStandortDetail(standort) {
                 ? `<span class="location-hive-clamp">${htmlesc(h.Bemerkungen)}</span>`
                 : '<span class="location-hive-empty">—</span>'}
             </div>
-            <div class="location-hive-slot location-hive-slot-todo">
+            <div class="location-hive-slot location-hive-slot-todo text-emphasis">
               <span class="location-hive-slot-label sr-only">To-do</span>
               ${h.ToDo
-                ? `<strong class="location-hive-clamp">${htmlesc(h.ToDo)}</strong>`
+                ? `<span class="location-hive-clamp">${htmlesc(h.ToDo)}</span>`
                 : '<span class="location-hive-empty">—</span>'}
             </div>
           </div>
@@ -1084,7 +1092,9 @@ async function renderHive(hiveId) {
       ? `<time datetime="${htmlesc(v.Datum)}">${dateContent}</time>`
       : dateContent;
     const locationSetup = joinEscaped([v.Standort, v.Aufbau], ' · ') || '—';
-    const queenId = v.Queen_ID ? `Q ${htmlesc(v.Queen_ID)}` : '—';
+    const queenId = v.Queen_ID
+      ? `<a class="table-record-link" href="#/queens?id=${encodeURIComponent(v.Queen_ID)}" data-navigate="#/queens?id=${encodeURIComponent(v.Queen_ID)}" aria-label="Open queen ${htmlesc(v.Queen_ID)}">Q ${htmlesc(v.Queen_ID)}</a>`
+      : '—';
     const queenStatus = joinEscaped([v.Koenigin_status]);
     const brood = [v.Brut_Stifte, v.Brut_offen, v.Brut_verdeckelt]
       .map(displayValue)
@@ -1134,7 +1144,7 @@ async function renderHive(hiveId) {
               <div class="hive-visit-slot hive-visit-slot-todo">
                 <span class="sr-only">To-do</span>
                 ${v.ToDo
-                  ? `<strong class="hive-visit-clamp">${htmlesc(v.ToDo)}</strong>`
+                  ? `<span class="hive-visit-clamp">${htmlesc(v.ToDo)}</span>`
                   : '<span class="hive-visit-empty">—</span>'}
               </div>
             </div>
