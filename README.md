@@ -107,12 +107,15 @@ After loading the schema, open the login screen. If no admin exists, you’ll se
 - Visit page: View/update visit form
 - New visit: Prefilled from latest visit of that hive
 - Queens list: View/edit/create
+- Queen page: Form plus hive history per queen (hive no., from–to, visit count)
 - Movements: Sankey diagram for active hives in the current calendar year
 
 ## Notes
 - "Current location" is taken from the latest visit of a hive (Datum desc, ID desc).
 - Hives must be `inactive = 0` to show on location lists.
 - Creating a hive intentionally creates a synthetic first visit at location `NEW`; both writes run in one transaction.
+- Queen history is derived from `Visits` only: a stay is a run of consecutive visits sharing the same `Queen_ID` in one hive.
+- Queen history queries are pruned to the hives the queen ever visited; the result is identical, but scan and sort no longer cover the whole logbook.
 - Sankey start locations come from the latest visit before January 1.
 - A hive without an earlier location enters the Sankey on its first visit date.
 - If a hive has several visits on one date, the highest visit ID defines the end-of-day location.

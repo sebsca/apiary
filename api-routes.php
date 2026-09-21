@@ -19,6 +19,7 @@ function api_routes(): array {
     'queens' => ['method' => 'GET', 'roles' => []],
     'queen_options' => ['method' => 'GET', 'roles' => []],
     'queen' => ['method' => 'GET', 'roles' => []],
+    'queen_history' => ['method' => 'GET', 'roles' => []],
     'hive' => ['method' => 'GET', 'roles' => []],
     'hives_by_standort' => ['method' => 'GET', 'roles' => []],
     'visits_by_hive' => ['method' => 'GET', 'roles' => []],

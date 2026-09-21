@@ -749,12 +749,17 @@ async function renderQueenEdit(queenId) {
   const writable = canWrite();
   app.innerHTML = card('Queen', `#${queenId}`, loadingStateHtml('Loading queen…'));
   try {
-    const data = await apiGet({ action:'queen', id: queenId });
-    const q = data.queen;
+    const [queenRes, historyRes] = await Promise.all([
+      apiGet({ action:'queen', id: queenId }),
+      apiGet({ action:'queen_history', id: queenId })
+    ]);
+    const q = queenRes.queen;
+    const history = historyRes.history || [];
 
     app.innerHTML = card('Queen', `Edit #${q.ID}`, `
       ${!writable ? noticeHtml('Read-only access.', 'info') : ''}
       ${queenFormHtml({ q, mode:'update', readOnly: !writable })}
+      ${queenHistoryHtml(history)}
     `);
 
     if (writable) wireQueenForm({ queenId: q.ID, mode:'update' });
@@ -876,6 +881,51 @@ function wireQueenForm({ queenId, mode='update' }) {
     onSaved: () => { location.hash = '#/queens'; },
     onDeleted: () => { location.hash = '#/queens'; }
   });
+}
+
+function queenHistoryHtml(rows) {
+  const renderRows = historyRows => historyRows.map(row => {
+    const route = `#/hive/${encodeURIComponent(row.Hive_ID)}`;
+    const label = row.Hive_nr || `#${row.Hive_ID}`;
+    const inactive = Number(row.inactive) === 1;
+    const isCurrent = Number(row.is_current) === 1;
+    const fromMarkup = row.von
+      ? `<time datetime="${htmlesc(row.von)}">${htmlesc(fmtDate(row.von))}</time>`
+      : '—';
+    const toMarkup = isCurrent
+      ? '<span class="queen-history-current">current</span>'
+      : (row.bis ? `<time datetime="${htmlesc(row.bis)}">${htmlesc(fmtDate(row.bis))}</time>` : '—');
+    return `
+    <tr class="queen-history-row" data-navigate="${route}">
+      <th class="queen-history-hive-cell" scope="row">
+        <a class="table-record-link" href="${route}" aria-label="Open hive ${htmlesc(label)}">${htmlesc(label)}</a>
+        ${inactive ? '<span class="queen-history-inactive muted"> · inactive</span>' : ''}
+      </th>
+      <td class="queen-history-date">${fromMarkup}</td>
+      <td class="queen-history-date">${toMarkup}</td>
+      <td class="queen-history-count">${htmlesc(row.control_count)}</td>
+    </tr>
+  `;
+  }).join('');
+
+  return `
+    <div class="queen-history">
+      <h2 class="section-title">Hive history</h2>
+      ${tableScrollHtml('Hive history for this queen', `
+        <table class="table queen-history-table" aria-label="Hive history for this queen">
+          <thead>
+            <tr>
+              <th scope="col">Hive no.</th>
+              <th scope="col">From</th>
+              <th scope="col">To</th>
+              <th scope="col">Visits</th>
+            </tr>
+          </thead>
+          <tbody>${renderRows(rows) || tableEmptyRow('No hive history recorded for this queen.', 4)}</tbody>
+        </table>
+      `)}
+    </div>
+  `;
 }
 
 async function renderStandortDetail(standort) {

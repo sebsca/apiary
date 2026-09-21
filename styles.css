@@ -781,7 +781,7 @@ body[data-route^="hive-"][data-route$="-new-visit"] .container {
   text-underline-offset: 3px;
 }
 
-.table:not(.locations-table):not(.queens-table):not(.location-hives-table):not(.hive-visits-table) {
+.table:not(.locations-table):not(.queens-table):not(.location-hives-table):not(.hive-visits-table):not(.queen-history-table) {
   min-width: 690px;
 }
 
@@ -905,6 +905,42 @@ body[data-route^="hive-"][data-route$="-new-visit"] .container {
 .queens-table tbody tr.queen-year-4 td {
   border-left-color: #43875f;
   background: #edf8f1;
+}
+
+/* Queen detail: history of a queen per hive (hive no., from, to, visits). */
+.queen-history-table {
+  min-width: 0;
+  table-layout: fixed;
+  background: var(--color-surface-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.queen-history-table th:nth-child(1) {
+  width: 34%;
+}
+
+.queen-history-table th:nth-child(2),
+.queen-history-table th:nth-child(3) {
+  width: 28%;
+}
+
+.queen-history-table th:nth-child(4) {
+  width: 10%;
+  text-align: right;
+}
+
+.queen-history-table tbody tr td.queen-history-count {
+  text-align: right;
+}
+
+.queen-history-table .queen-history-hive-cell {
+  background: inherit;
+  font-weight: 650;
+}
+
+.queen-history-current {
+  font-weight: 750;
+  color: var(--color-accent-hover);
 }
 
 /* Dense comparison tables: one consistently aligned row per record. */
@@ -1465,11 +1501,6 @@ fieldset:disabled .segmented-button span {
 #hive-form {
   width: 100%;
   max-width: 620px;
-}
-
-#queen-form {
-  width: 100%;
-  max-width: 800px;
 }
 
 #visit-form {

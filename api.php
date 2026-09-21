@@ -461,6 +461,74 @@ try {
     respond(['queen' => $row]);
   }
 
+  if ($action === 'queen_history') {
+    $id = (int)require_param('id');
+    // Visits only store a date, not a time, so a stay is a run of consecutive
+    // visits sharing the same Queen_ID. LAG detects the run start relative to
+    // the previous visit of the hive, the running SUM numbers the stays.
+    // target_hives prunes the window input to the hives this queen ever visited
+    // (index visits_queen): a stay of this queen can only exist there, so the
+    // result is unchanged while scan and sort no longer cover the whole logbook.
+    // `is_current` marks the stay that still ends with the latest known queen
+    // visit of that hive; inactive hives never have a running stay.
+    $sql = "
+      WITH target_hives AS (
+        SELECT DISTINCT v.`Hive_ID`
+        FROM Visits v
+        WHERE v.`Queen_ID` = :queen_id_hives
+      ),
+      queen_visits AS (
+        SELECT v.`Hive_ID`, v.`Datum`, v.`ID`, v.`Queen_ID`
+        FROM Visits v
+        JOIN target_hives th ON th.`Hive_ID` = v.`Hive_ID`
+        WHERE v.`Queen_ID` IS NOT NULL
+      ),
+      marked AS (
+        SELECT qv.*,
+               CASE WHEN LAG(qv.`Queen_ID`) OVER (
+                      PARTITION BY qv.`Hive_ID` ORDER BY qv.`Datum`, qv.`ID`
+                    ) <=> qv.`Queen_ID`
+                    THEN 0 ELSE 1 END AS stay_start
+        FROM queen_visits qv
+      ),
+      grouped AS (
+        SELECT m.*,
+               SUM(m.stay_start) OVER (
+                 PARTITION BY m.`Hive_ID` ORDER BY m.`Datum`, m.`ID`
+               ) AS stay_no
+        FROM marked m
+      ),
+      stays AS (
+        SELECT g.`Hive_ID`, g.`Queen_ID`,
+               MIN(g.`Datum`) AS von,
+               MAX(g.`Datum`) AS bis,
+               COUNT(*) AS control_count
+        FROM grouped g
+        GROUP BY g.`Hive_ID`, g.`stay_no`, g.`Queen_ID`
+      ),
+      last_queen_visit AS (
+        SELECT v.`Hive_ID`, MAX(v.`Datum`) AS last_date
+        FROM queen_visits v
+        GROUP BY v.`Hive_ID`
+      )
+      SELECT s.`Hive_ID`,
+             COALESCE(NULLIF(h.`Hive_nr`, ''), CONCAT('#', s.`Hive_ID`)) AS Hive_nr,
+             h.`inactive`,
+             s.`von`,
+             s.`bis`,
+             s.`control_count`,
+             ((s.`bis` >= lqv.`last_date`) AND h.`inactive` = 0) AS is_current
+      FROM stays s
+      JOIN Hives h ON h.`ID` = s.`Hive_ID`
+      JOIN last_queen_visit lqv ON lqv.`Hive_ID` = s.`Hive_ID`
+      WHERE s.`Queen_ID` = :id
+      ORDER BY s.`von` DESC, s.`Hive_ID` ASC";
+    $stmt = $pdo->prepare($sql);
+    // Two distinct names: native prepared statements reject a placeholder used twice.
+    $stmt->execute(['queen_id_hives' => $id, 'id' => $id]);
+    respond(['history' => $stmt->fetchAll()]);
+  }
+
   if ($action === 'hive') {
     $id = (int)require_param('id');
     $stmt = $pdo->prepare("SELECT ID, Hive_nr, inactive FROM Hives WHERE ID = :id");
