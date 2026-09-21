@@ -10,25 +10,20 @@ function load_movement_rows(PDO $pdo, string $fromDate): array {
             NULLIF(TRIM(v.`Standort`), '') AS Standort
           FROM Visits v
           JOIN Hives h ON h.`ID` = v.`Hive_ID`
-          WHERE h.`inactive` = 0
-            AND (
-              (
-                v.`Datum` < :from_date_before
-                AND v.`ID` = (
-                  SELECT v2.`ID`
-                  FROM Visits v2
-                  WHERE v2.`Hive_ID` = v.`Hive_ID`
-                    AND v2.`Datum` < :from_date_lookup
-                  ORDER BY v2.`Datum` DESC, v2.`ID` DESC
-                  LIMIT 1
-                )
-              )
-              OR (
-                v.`Datum` >= :from_date
-                AND v.`Standort` IS NOT NULL
-                AND TRIM(v.`Standort`) <> ''
+          WHERE (
+            (
+              v.`Datum` < :from_date_before
+              AND v.`ID` = (
+                SELECT v2.`ID`
+                FROM Visits v2
+                WHERE v2.`Hive_ID` = v.`Hive_ID`
+                  AND v2.`Datum` < :from_date_lookup
+                ORDER BY v2.`Datum` DESC, v2.`ID` DESC
+                LIMIT 1
               )
             )
+            OR v.`Datum` >= :from_date
+          )
           ORDER BY v.`Hive_ID` ASC, v.`Datum` ASC, v.`ID` ASC";
   $stmt = $pdo->prepare($sql);
   $stmt->execute([
@@ -43,7 +38,9 @@ function sankey_node_key(int $column, string $name): string {
   return $column . "\0" . $name;
 }
 
-function build_sankey_graph(array $rows, string $fromDate): array {
+function build_sankey_graph(array $rows, string $fromDate, ?string $currentDate=null): array {
+  $currentDate ??= (new DateTimeImmutable('today'))->format('Y-m-d');
+
   usort($rows, static function (array $a, array $b): int {
     return [(int)$a['Hive_ID'], (string)$a['Datum'], (int)($a['ID'] ?? 0)]
       <=> [(int)$b['Hive_ID'], (string)$b['Datum'], (int)($b['ID'] ?? 0)];
@@ -51,34 +48,35 @@ function build_sankey_graph(array $rows, string $fromDate): array {
 
   $hives = [];
   foreach ($rows as $row) {
-    if ((int)($row['inactive'] ?? 0) !== 0) {
-      continue;
-    }
     $hiveId = (int)$row['Hive_ID'];
     if (!isset($hives[$hiveId])) {
       $hives[$hiveId] = [
         'id' => $hiveId,
         'nr' => (string)$row['Hive_nr'],
+        'inactive' => (int)($row['inactive'] ?? 0) !== 0,
+        'last_visit' => null,
         'start' => null,
         'days' => []
       ];
     }
 
+    $date = (string)$row['Datum'];
+    $hives[$hiveId]['last_visit'] = $date;
     $location = trim((string)($row['Standort'] ?? ''));
     $location = $location === '' ? null : $location;
-    if ((string)$row['Datum'] < $fromDate) {
+    if ($date < $fromDate) {
       $hives[$hiveId]['start'] = $location;
       continue;
     }
     if ($location !== null) {
       // Visits only store a date, not a time. The highest visit ID is therefore
       // the deterministic end-of-day position when several visits share a date.
-      $hives[$hiveId]['days'][(string)$row['Datum']] = $location;
+      $hives[$hiveId]['days'][$date] = $location;
     }
   }
 
   $movements = [];
-  $currentPositions = [];
+  $finalPositions = [];
   $periodStarts = [];
   $eventDates = [];
 
@@ -118,34 +116,29 @@ function build_sankey_graph(array $rows, string $fromDate): array {
       $lastEventDate = $date;
     }
 
-    if ($lastLocation !== null) {
-      $currentPositions[] = [
-        'hive' => $hive['nr'],
-        'hive_id' => $hive['id'],
-        'source_name' => $lastLocation,
-        'target_name' => $lastLocation,
-        'source_date' => $lastEventDate
-      ];
+    $endDate = $hive['inactive'] ? $hive['last_visit'] : $currentDate;
+    if ($lastLocation === null || $endDate < $fromDate) {
+      continue;
     }
+
+    $eventDates[$endDate] = true;
+    $finalPositions[] = [
+      'hive' => $hive['nr'],
+      'hive_id' => $hive['id'],
+      'source_name' => $lastLocation,
+      'target_name' => $lastLocation,
+      'source_date' => $lastEventDate,
+      'date' => $endDate
+    ];
   }
 
   $dates = array_keys($eventDates);
   sort($dates);
-  $currentDate = count($dates) > 0 ? $dates[count($dates) - 1] : null;
   $columns = ['Start'];
   $dateColumns = [];
   foreach ($dates as $date) {
     $dateColumns[$date] = count($columns);
     $columns[] = $date;
-  }
-
-  if ($currentDate !== null) {
-    foreach ($currentPositions as &$position) {
-      $position['date'] = $currentDate;
-    }
-    unset($position);
-  } else {
-    $currentPositions = [];
   }
 
   $periodStartCounts = [];
@@ -178,7 +171,7 @@ function build_sankey_graph(array $rows, string $fromDate): array {
     return $nodeMap[$key];
   };
 
-  foreach (array_merge($movements, $currentPositions) as $movement) {
+  foreach (array_merge($movements, $finalPositions) as $movement) {
     $sourceColumn = $movement['source_date'] ? ($dateColumns[$movement['source_date']] ?? 0) : 0;
     $targetColumn = $dateColumns[$movement['date']];
     if ($targetColumn <= $sourceColumn) {
@@ -195,12 +188,14 @@ function build_sankey_graph(array $rows, string $fromDate): array {
         'value' => 0,
         'date' => $movement['date'],
         'hives' => [],
-        'hive_ids' => []
+        'hive_ids' => [],
+        'hive_records' => []
       ];
     }
     $linkMap[$linkKey]['value']++;
     $linkMap[$linkKey]['hives'][$movement['hive']] = true;
     $linkMap[$linkKey]['hive_ids'][(string)$movement['hive_id']] = true;
+    $linkMap[$linkKey]['hive_records'][(string)$movement['hive_id']] = $movement['hive'];
   }
 
   foreach ($periodStartCounts as $start) {
@@ -252,13 +247,20 @@ function build_sankey_graph(array $rows, string $fromDate): array {
     $hiveIds = array_keys($link['hive_ids']);
     sort($hiveNumbers, SORT_NATURAL);
     sort($hiveIds, SORT_NUMERIC);
+    $hiveRecords = array_map(
+      static fn(string $id, string $nr): array => ['id' => (int)$id, 'nr' => $nr],
+      array_keys($link['hive_records']),
+      $link['hive_records']
+    );
+    usort($hiveRecords, static fn(array $a, array $b): int => strnatcmp($a['nr'], $b['nr']) ?: $a['id'] <=> $b['id']);
     $links[] = [
       'source' => $link['source'],
       'target' => $link['target'],
       'value' => $link['value'],
       'date' => $link['date'],
       'hives' => implode(', ', $hiveNumbers),
-      'hive_ids' => implode(', ', $hiveIds)
+      'hive_ids' => implode(', ', $hiveIds),
+      'hive_records' => $hiveRecords
     ];
   }
 

@@ -390,7 +390,7 @@ async function renderStandorte() {
   `);
 }
 
-async function renderHives() {
+async function renderHives(query) {
   setActiveTab('/hives');
   app.innerHTML = card('Hives', null, loadingStateHtml('Loading hives…'));
   const data = await apiGet({ action:'hives' });
@@ -431,6 +431,9 @@ async function renderHives() {
       : null,
     todo: hive => hive.ToDo
   };
+  let activeSort = query.get('sort');
+  if (!Object.hasOwn(sortValues, activeSort)) activeSort = 'hive';
+  let ascending = query.get('direction') !== 'desc';
   const compareValues = (left, right, ascending) => {
     const leftEmpty = left === null || left === undefined || left === '';
     const rightEmpty = right === null || right === undefined || right === '';
@@ -458,14 +461,12 @@ async function renderHives() {
           <th scope="col"><button type="button" class="table-sort-button" data-hive-sort="todo">To-Do</button></th>
         </tr>
       </thead>
-      <tbody id="hives-table-body">${renderHiveRows(sortHives('hive', true)) || tableEmptyRow('No active hives found.', 5)}</tbody>
+      <tbody id="hives-table-body">${renderHiveRows(sortHives(activeSort, ascending)) || tableEmptyRow('No active hives found.', 5)}</tbody>
     </table>
   `));
 
   const tableBody = document.getElementById('hives-table-body');
   const sortButtons = [...app.querySelectorAll('[data-hive-sort]')];
-  let activeSort = 'hive';
-  let ascending = true;
   const updateSortIndicators = () => {
     sortButtons.forEach(sortButton => {
       const isActive = sortButton.dataset.hiveSort === activeSort;
@@ -479,6 +480,8 @@ async function renderHives() {
       const key = button.dataset.hiveSort;
       ascending = activeSort === key ? !ascending : true;
       activeSort = key;
+      const params = new URLSearchParams({ sort: activeSort, direction: ascending ? 'asc' : 'desc' });
+      history.replaceState(history.state, '', `#/hives?${params}`);
       tableBody.innerHTML = renderHiveRows(sortHives(key, ascending))
         || tableEmptyRow('No active hives found.', 5);
       updateSortIndicators();
@@ -499,16 +502,25 @@ async function renderHiveMovements() {
 
   const nodes = data.nodes || [];
   const chartAvailable = !!(window.d3 && window.d3.sankey && window.d3.sankeyLinkHorizontal);
-  const nodeName = (reference) => {
-    if (reference && typeof reference === 'object') return reference.name || '—';
-    return nodes[Number(reference)]?.name || '—';
-  };
-  const movementRows = (data.links || []).map(link => `
+  const nodeName = reference => nodes[Number(reference)]?.name || reference?.name || '—';
+  const compareNames = (a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+  const movementTableRows = Object.values((data.links || []).reduce((rows, link) => {
+    const source = nodeName(link.source);
+    const target = nodeName(link.target);
+    if (source === target) return rows;
+    const key = `${link.date}\0${source}\0${target}`;
+    const row = rows[key] ||= { date: link.date, source, target, value: 0, hives: new Map() };
+    row.value += Number(link.value) || 0;
+    (link.hive_records || []).forEach(({ id, nr }) => row.hives.set(id, nr));
+    return rows;
+  }, {})).sort((a, b) => a.date.localeCompare(b.date)
+    || compareNames(a.source, b.source));
+  const movementRows = movementTableRows.map(row => `
     <tr>
-      <td>${htmlesc(fmtDate(link.date))}</td>
-      <td>${htmlesc(nodeName(link.source))} <span aria-hidden="true">→</span><span class="sr-only"> to </span> ${htmlesc(nodeName(link.target))}</td>
-      <td>${htmlesc(link.value ?? 0)}</td>
-      <td>${htmlesc(link.hives || link.hive_ids || '—')}</td>
+      <td>${htmlesc(fmtDate(row.date))}</td>
+      <td>${htmlesc(row.source)} <span aria-hidden="true">→</span><span class="sr-only"> to </span> ${htmlesc(row.target)}</td>
+      <td>${htmlesc(row.value)}</td>
+      <td>${[...row.hives].sort(([, a], [, b]) => compareNames(a, b)).map(([id, nr]) => `<a class="table-record-link" href="#/hive/${encodeURIComponent(id)}">${htmlesc(nr)}</a>`).join(', ') || '—'}</td>
     </tr>
   `).join('');
 
@@ -521,7 +533,7 @@ async function renderHiveMovements() {
       <table class="table movements-table" aria-label="Hive movement details">
         <thead>
           <tr>
-            <th scope="col">Date</th>
+            <th scope="col" aria-sort="ascending">Date</th>
             <th scope="col">Movement</th>
             <th scope="col">Count</th>
             <th scope="col">Hives</th>
@@ -546,18 +558,28 @@ function renderCharts() {
       loading="eager"
     ></iframe>
   `);
+  const frame = app.querySelector('.charts-frame');
+  window.addEventListener('message', ({ source, origin, data }) => {
+    if (source !== frame.contentWindow || origin !== location.origin || data?.type !== 'apiary-charts-height') return;
+    const height = Math.ceil(Number(data.height));
+    if (height > 0) frame.style.height = `${height}px`;
+  }, { signal: routeAbortController?.signal });
 }
 
-async function renderQueens(queenFilterId = '', motherFilterId = '') {
+async function renderQueens(query) {
   setActiveTab('/queens');
+  const queenFilterId = query.get('id') || '';
+  const motherFilterId = query.get('mother') || '';
   const sortOptions = {
     birth: { label: 'Birth year + ID', defaultAscending: false },
     id: { label: 'ID', defaultAscending: false },
     daughters: { label: 'Daughters', defaultAscending: false, alignRight: true },
     location: { label: 'Location + hive number', defaultAscending: true, alignRight: true }
   };
-  let activeSort = 'birth';
-  let ascending = sortOptions[activeSort].defaultAscending;
+  let activeSort = query.get('sort');
+  if (!Object.hasOwn(sortOptions, activeSort)) activeSort = 'birth';
+  let ascending = query.has('direction')
+    ? query.get('direction') !== 'desc' : sortOptions[activeSort].defaultAscending;
   const sortHeader = `
     <thead>
       <tr>
@@ -727,9 +749,12 @@ async function renderQueens(queenFilterId = '', motherFilterId = '') {
   sortButtons.forEach(button => {
     button.addEventListener('click', () => {
       const requestedKey = button.dataset.queenSort;
-      const key = Object.prototype.hasOwnProperty.call(sortOptions, requestedKey) ? requestedKey : 'birth';
+      const key = Object.hasOwn(sortOptions, requestedKey) ? requestedKey : 'birth';
       ascending = activeSort === key ? !ascending : sortOptions[key].defaultAscending;
       activeSort = key;
+      query.set('sort', activeSort);
+      query.set('direction', ascending ? 'asc' : 'desc');
+      history.replaceState(history.state, '', `#/queens?${query}`);
       renderFilteredQueens();
       updateSortIndicators();
     });
@@ -2116,10 +2141,10 @@ async function router() {
   }
 
   if (path === '/' || path === '//') return renderStandorte();
-  if (path === '/hives') return renderHives();
+  if (path === '/hives') return renderHives(r.query);
   if (path === '/movements') return renderHiveMovements();
   if (path === '/charts') return renderCharts();
-  if (path === '/queens') return renderQueens(r.query.get('id') || '', r.query.get('mother') || '');
+  if (path === '/queens') return renderQueens(r.query);
   if (path === '/login') return renderLogin(r);
   if (path === '/account') return renderAccount();
   if (path === '/admin') {

@@ -430,7 +430,7 @@ body[data-route^="hive-"][data-route$="-new-visit"] .container {
 .charts-frame {
   display: block;
   width: 100%;
-  min-height: max(620px, calc(100vh - 150px));
+  height: max(620px, calc(100vh - 150px));
   border: 0;
   background: transparent;
 }

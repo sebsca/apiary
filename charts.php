@@ -84,6 +84,14 @@ function chartsRows($data)
     return $data;
 }
 
+function chartsBrowserCulture()
+{
+    $languages = $_SERVER['HTTP_ACCEPT_LANGUAGE'] ?? '';
+    $culture = trim(explode(';', explode(',', (string)$languages)[0])[0]);
+    return preg_match('/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/D', $culture)
+        ? $culture : null;
+}
+
 function chartsTimestamp($row)
 {
     $value = $row['time'] ?? null;
@@ -222,7 +230,10 @@ if (isset($_GET['data'])) {
 $charts = [];
 $errors = [];
 try {
-    $hives = chartsRows(chartsApiGet($baseUrl . '/api/hives?culture=de-DE', $token));
+    $culture = chartsBrowserCulture();
+    $hivesUrl = $baseUrl . '/api/hives' . ($culture === null
+        ? '' : '?' . http_build_query(['culture' => $culture]));
+    $hives = chartsRows(chartsApiGet($hivesUrl, $token));
     $seenHives = [];
     foreach ($hives as $hive) {
         if (!is_array($hive) || !isset($hive['id']) || !is_scalar($hive['id'])) {
@@ -328,35 +339,45 @@ if (!$charts && $errors) {
         <noscript><p class="notice">Please enable JavaScript to view the charts.</p></noscript>
     <?php endif; ?>
 </main>
+<script>
+(() => {
+    const reportHeight = () => parent.postMessage({
+        type: 'apiary-charts-height', height: document.documentElement.scrollHeight
+    }, location.origin);
+    new ResizeObserver(reportHeight).observe(document.body);
+    addEventListener('load', reportHeight);
+    requestAnimationFrame(reportHeight);
+})();
+</script>
 <?php if ($charts): ?>
 <!-- Pinned version, loaded via CDN like the template. No project dependencies. -->
 <script src="https://cdn.jsdelivr.net/npm/apexcharts@5.3.6/dist/apexcharts.min.js"></script>
 <script>
 (() => {
     const hiveCharts = <?= json_encode($charts, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR) ?>;
-    const weightFormat = new Intl.NumberFormat('de-AT', {
+    const weightFormat = new Intl.NumberFormat(undefined, {
         minimumFractionDigits: 2, maximumFractionDigits: 2
     });
-    const temperatureFormat = new Intl.NumberFormat('de-AT', {
+    const temperatureFormat = new Intl.NumberFormat(undefined, {
         minimumFractionDigits: 1, maximumFractionDigits: 1
     });
-    const axisFormat = new Intl.NumberFormat('de-AT', {
+    const axisFormat = new Intl.NumberFormat(undefined, {
         maximumFractionDigits: 0
     });
-    const weightAxisFormat = new Intl.NumberFormat('de-AT', {
+    const weightAxisFormat = new Intl.NumberFormat(undefined, {
         maximumFractionDigits: 0
     });
     const range = <?= json_encode($range) ?>;
     const dayMs = 24 * 60 * 60 * 1000;
     const xAxisFormats = {
-        hours: new Intl.DateTimeFormat('de-AT', {
+        hours: new Intl.DateTimeFormat(undefined, {
             day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
         }),
-        days: new Intl.DateTimeFormat('de-AT', { day: '2-digit', month: '2-digit' }),
-        months: new Intl.DateTimeFormat('de-AT', { month: '2-digit', year: 'numeric' }),
-        years: new Intl.DateTimeFormat('de-AT', { year: 'numeric' })
+        days: new Intl.DateTimeFormat(undefined, { day: '2-digit', month: '2-digit' }),
+        months: new Intl.DateTimeFormat(undefined, { month: '2-digit', year: 'numeric' }),
+        years: new Intl.DateTimeFormat(undefined, { year: 'numeric' })
     };
-    const dateTimeFormat = new Intl.DateTimeFormat('de-AT', {
+    const dateTimeFormat = new Intl.DateTimeFormat(undefined, {
         day: '2-digit', month: '2-digit', year: 'numeric',
         hour: '2-digit', minute: '2-digit'
     });
