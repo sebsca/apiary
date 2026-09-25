@@ -427,14 +427,6 @@ body[data-route^="hive-"][data-route$="-new-visit"] .container {
   box-shadow: var(--shadow-card);
 }
 
-.charts-frame {
-  display: block;
-  width: 100%;
-  height: max(620px, calc(100vh - 150px));
-  border: 0;
-  background: transparent;
-}
-
 .card-header {
   display: flex;
   flex-direction: column;
@@ -451,7 +443,7 @@ body[data-route^="hive-"][data-route$="-new-visit"] .container {
   gap: var(--space-3);
 }
 
-.card-body > :empty:not(iframe) {
+.card-body > :empty {
   display: none;
 }
 
@@ -1528,6 +1520,73 @@ fieldset:disabled .segmented-button span {
 .table-actions-group .user-role {
   width: auto;
 }
+
+/* Hive monitoring */
+.chart-ranges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.hive-chart + .hive-chart {
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--space-8);
+}
+
+.hive-chart h2 {
+  margin: 0;
+  font-size: var(--font-lg);
+  overflow-wrap: anywhere;
+}
+
+.weight-chart {
+  width: 100%;
+  min-width: 0;
+  min-height: 365px;
+}
+
+.chart-tooltip {
+  min-width: 230px;
+  padding: var(--space-4) var(--space-5);
+  background: var(--color-surface);
+}
+
+.chart-tooltip-date {
+  margin-bottom: var(--space-2);
+  color: var(--color-text-secondary);
+  font-weight: 600;
+}
+
+.chart-tooltip-row {
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.chart-tooltip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.chart-tooltip-weight { background: var(--color-accent); }
+.chart-tooltip-temperature { background: var(--color-warning); }
+.chart-tooltip-value { font-weight: 600; }
+
+.chart-tooltip-measured {
+  grid-column: 2 / 4;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-xs);
+}
+
+.hive-chart .apexcharts-gridlines-horizontal line {
+  stroke: var(--color-surface-strong);
+  stroke-width: 1;
+}
+
+.hive-chart .apexcharts-yaxis-annotations line { stroke-width: 1.35; }
 
 /* Movement chart */
 .sankey-chart {

@@ -5,6 +5,7 @@ require_once __DIR__ . '/api-bootstrap.php';
 require_once __DIR__ . '/api-routes.php';
 require_once __DIR__ . '/login-security.php';
 require_once __DIR__ . '/movements.php';
+require_once __DIR__ . '/charts.php';
 
 const USER_ROLES = ['admin', 'contributor', 'readonly'];
 const DEFAULT_RESET_PASSWORD = '12345678';
@@ -130,6 +131,10 @@ try {
     respond(['error' => 'Method not allowed'], 405);
   }
 
+  if ($action === 'charts' || $action === 'charts_data') {
+    header('Cache-Control: private, no-store');
+  }
+
   $pdo = get_pdo();
   $authenticatedUser = apiary_refresh_authenticated_user($pdo);
 
@@ -144,6 +149,22 @@ try {
     require_csrf();
   }
   $payload = $_SERVER['REQUEST_METHOD'] === 'POST' ? request_payload() : [];
+
+  if ($action === 'charts' || $action === 'charts_data') {
+    session_write_close();
+    try {
+      if ($action === 'charts') {
+        respond(chartsOverview($_GET));
+      }
+      if ($action === 'charts_data') {
+        respond(chartsDetails($_GET));
+      }
+    } catch (InvalidArgumentException $exception) {
+      respond(['error' => $exception->getMessage()], 400);
+    } catch (RuntimeException $exception) {
+      respond(['error' => $exception->getMessage()], 502);
+    }
+  }
 
   if ($action === 'me') {
     respond(['user' => $authenticatedUser, 'csrf' => csrf_token()]);

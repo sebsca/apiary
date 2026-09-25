@@ -15,6 +15,8 @@ function api_routes(): array {
     'user_reset_password' => ['method' => 'POST', 'roles' => ['admin']],
     'standorte' => ['method' => 'GET', 'roles' => []],
     'hives' => ['method' => 'GET', 'roles' => []],
+    'charts' => ['method' => 'GET', 'roles' => []],
+    'charts_data' => ['method' => 'GET', 'roles' => []],
     'hive_movements' => ['method' => 'GET', 'roles' => []],
     'queens' => ['method' => 'GET', 'roles' => []],
     'queen_options' => ['method' => 'GET', 'roles' => []],

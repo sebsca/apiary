@@ -548,22 +548,49 @@ async function renderHiveMovements() {
   }
 }
 
-function renderCharts() {
+async function renderCharts(query) {
   setActiveTab('/charts');
+  const ranges = { '5y': '5 years', '1y': '1 year', '1m': '1 month', '1w': '1 week', '1d': '1 day' };
+  const requested = query.get('range');
+  const range = Object.hasOwn(ranges, requested) ? requested : '1w';
+  const signal = routeAbortController.signal;
   app.innerHTML = card('Hive Monitoring', null, `
-    <iframe
-      class="charts-frame"
-      src="charts.php"
-      title="Hive weight and outside temperature charts"
-      loading="eager"
-    ></iframe>
+    <div class="vstack">
+      <div class="chart-ranges" role="group" aria-label="Select time range">
+        ${Object.entries(ranges).map(([key, label]) => `
+          <button type="button" class="btn${range === key ? ' primary' : ''}"
+            data-navigate="#/charts?range=${key}" aria-pressed="${range === key}">${label}</button>
+        `).join('')}
+      </div>
+      <div id="monitoring-charts" class="vstack" aria-busy="true">
+        ${loadingStateHtml('Loading hive measurements…')}
+      </div>
+    </div>
   `);
-  const frame = app.querySelector('.charts-frame');
-  window.addEventListener('message', ({ source, origin, data }) => {
-    if (source !== frame.contentWindow || origin !== location.origin || data?.type !== 'apiary-charts-height') return;
-    const height = Math.ceil(Number(data.height));
-    if (height > 0) frame.style.height = `${height}px`;
-  }, { signal: routeAbortController?.signal });
+  const container = document.getElementById('monitoring-charts');
+  try {
+    const [data, { renderMonitoringCharts }] = await Promise.all([
+      apiGet({ action: 'charts', range }, { signal }),
+      import('./monitoring-charts.js')
+    ]);
+    if (signal.aborted) return;
+    container.innerHTML = data.errors.map(error => noticeHtml(error, 'warning')).join('')
+      + (data.charts.length ? data.charts.map((hive, index) => `
+        <section class="hive-chart vstack" aria-labelledby="hive-chart-title-${index}">
+          <div class="hstack">
+            <h2 id="hive-chart-title-${index}">${htmlesc(hive.name)}</h2>
+            <span class="subtitle">Weight ${htmlesc(hive.weightPoints.at(-1).y.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }))} kg${hive.temperaturePoints.length ? ` · Outside ${htmlesc(hive.temperaturePoints.at(-1).y.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }))} °C` : ''}</span>
+          </div>
+          <div id="monitoring-chart-${index}" class="weight-chart" role="region" aria-labelledby="hive-chart-title-${index}"></div>
+          <div id="chart-error-${index}" class="notice" data-state="error" role="alert" hidden></div>
+        </section>
+      `).join('') : emptyStateHtml('No weight measurements are available for the selected period.'));
+    renderMonitoringCharts(container, data, { apiGet, signal });
+  } catch (error) {
+    if (!signal.aborted) container.innerHTML = noticeHtml(`Unable to load charts: ${error.message}`, 'error');
+  } finally {
+    if (!signal.aborted) container.setAttribute('aria-busy', 'false');
+  }
 }
 
 async function renderQueens(query) {
@@ -2143,7 +2170,7 @@ async function router() {
   if (path === '/' || path === '//') return renderStandorte();
   if (path === '/hives') return renderHives(r.query);
   if (path === '/movements') return renderHiveMovements();
-  if (path === '/charts') return renderCharts();
+  if (path === '/charts') return renderCharts(r.query);
   if (path === '/queens') return renderQueens(r.query);
   if (path === '/login') return renderLogin(r);
   if (path === '/account') return renderAccount();

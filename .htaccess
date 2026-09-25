@@ -17,6 +17,3 @@ RewriteRule ^(?:\.git|\.agents|\.codex|tests|migrations)(?:/|$) - [F,L]
 <Files "api.php">
   Require all granted
 </Files>
-<Files "charts.php">
-  Require all granted
-</Files>

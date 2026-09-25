@@ -48,7 +48,8 @@ CREATE TABLE LoginRateLimits (
   scope_key char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   attempt_count int unsigned NOT NULL DEFAULT 0,
   window_started_at datetime(6) NOT NULL,
-  PRIMARY KEY (scope_type, scope_key)
+  PRIMARY KEY (scope_type, scope_key),
+  KEY login_rate_limits_window_started (window_started_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE Visits (

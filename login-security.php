@@ -6,6 +6,10 @@ const LOGIN_RATE_RULES = [
   'account' => ['limit' => 20, 'window_seconds' => 3600],
 ];
 
+const LOGIN_RATE_CLEANUP_LOCK = 'apiary-loginrate-cleanup';
+const LOGIN_RATE_CLEANUP_RETENTION_HOURS = 24;
+const LOGIN_RATE_CLEANUP_BATCH_SIZE = 500;
+
 function login_client_ip(): string {
   $ip = trim((string)($_SERVER['REMOTE_ADDR'] ?? ''));
   return $ip !== '' ? $ip : 'unknown';
@@ -21,6 +25,38 @@ function login_rate_keys(string $username, string $ip): array {
   ];
 }
 
+function cleanup_login_rate_limits(PDO $pdo): void {
+  $lockAcquired = false;
+  try {
+    $acquire = $pdo->prepare('SELECT GET_LOCK(:lock_name, 0)');
+    $acquire->execute(['lock_name' => LOGIN_RATE_CLEANUP_LOCK]);
+    $lockAcquired = (int)$acquire->fetchColumn() === 1;
+    if (!$lockAcquired) {
+      return;
+    }
+
+    $delete = $pdo->prepare(
+      'DELETE FROM LoginRateLimits
+       WHERE window_started_at < UTC_TIMESTAMP(6) - INTERVAL ' . LOGIN_RATE_CLEANUP_RETENTION_HOURS . ' HOUR
+       ORDER BY window_started_at ASC
+       LIMIT ' . LOGIN_RATE_CLEANUP_BATCH_SIZE
+    );
+    $delete->execute();
+  } catch (Throwable $exception) {
+    // Cleanup is best-effort; rate-limit checks below remain authoritative.
+    error_log('Login rate-limit cleanup failed: ' . $exception->getMessage());
+  } finally {
+    if ($lockAcquired) {
+      try {
+        $release = $pdo->prepare('SELECT RELEASE_LOCK(:lock_name)');
+        $release->execute(['lock_name' => LOGIN_RATE_CLEANUP_LOCK]);
+      } catch (Throwable $exception) {
+        error_log('Login rate-limit cleanup lock could not be released: ' . $exception->getMessage());
+      }
+    }
+  }
+}
+
 function process_login_attempt(PDO $pdo, array $keys, callable $verifyCredentials): array {
   $scopes = array_keys(LOGIN_RATE_RULES);
   sort($scopes, SORT_STRING);
@@ -29,6 +65,8 @@ function process_login_attempt(PDO $pdo, array $keys, callable $verifyCredential
       throw new InvalidArgumentException('Invalid login rate-limit key.');
     }
   }
+
+  cleanup_login_rate_limits($pdo);
 
   $lockNames = [];
   foreach ($scopes as $scope) {

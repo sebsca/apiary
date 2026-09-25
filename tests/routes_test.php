@@ -7,7 +7,7 @@ $expectedActions = [
   'me', 'admin_bootstrap_status', 'admin_bootstrap_create', 'login', 'logout',
   'change_password', 'users_list', 'user_create', 'user_delete',
   'user_update_role', 'user_reset_password', 'standorte', 'hives',
-  'hive_movements', 'queens', 'queen_options', 'queen', 'queen_history', 'hive',
+  'charts', 'charts_data', 'hive_movements', 'queens', 'queen_options', 'queen', 'queen_history', 'hive',
   'hives_by_standort', 'visits_by_hive', 'visit', 'visit_defaults',
   'visit_create', 'visit_update', 'visit_delete', 'hive_create', 'hive_update',
   'queen_create', 'queen_update', 'queen_delete'
@@ -26,6 +26,12 @@ foreach ($routes as $action => $route) {
   }
   if (!array_key_exists('roles', $route) || ($route['roles'] !== null && !is_array($route['roles']))) {
     throw new RuntimeException("{$action} has an invalid role policy.");
+  }
+}
+
+foreach (['charts', 'charts_data'] as $action) {
+  if ($routes[$action] !== ['method' => 'GET', 'roles' => []]) {
+    throw new RuntimeException("{$action} must require an authenticated GET request.");
   }
 }
 
