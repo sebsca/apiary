@@ -4,6 +4,7 @@ Lightweight SPA + PHP JSON API for managing apiary visits, hives, and queens.
 
 ## Files
 - `index.html` – UI
+- `favicon.svg`, `favicon.ico` – bee browser tab logo, viewed from above at 45°
 - `styles.css` – styling
 - `app.js` – SPA pages, authentication state, and hash routing
 - `api-client.js` – HTTP/JSON client
@@ -11,6 +12,7 @@ Lightweight SPA + PHP JSON API for managing apiary visits, hives, and queens.
 - `ui-utils.js` – HTML, date, card, and route helpers
 - `sankey-chart.js` – D3 rendering
 - `monitoring-charts.js` – ApexCharts rendering, zoom, and detail loading
+- `monitoring-series.js` – measurement labels, units, and series selection
 - `api.php` – JSON handlers, dispatcher, and persistence
 - `api-bootstrap.php` – environment loading and PDO connection
 - `api-routes.php` – HTTP method and role policy for every API action
@@ -114,6 +116,8 @@ After loading the schema, open the login screen. If no admin exists, you’ll se
 - Queen page: Form plus hive history per queen (hive no., from–to, visit count)
 - Movements: Sankey diagram for active hives in the current calendar year
 - Charts: Weight and outside temperature, with the selected period in `#/charts?range=1w`. Zoom loads detailed measurements as needed through the authenticated `charts_data` action.
+- The Charts switch opens `#/charts/environment?range=1w` while retaining the selected period. Each scale has a humidity/battery chart, and each physical GSM gateway has a pressure/battery chart. Sensor identities group shared gateways into one chart. Scales without readings in the selected period remain listed with their last measurement time.
+- Chart device lists are rediscovered on every load from the token's hives, sensor assignments and gateway catalog. Added and removed devices are reflected without configuration changes. Multiple scales per hive and gateways without hive assignments are supported; catalog failures display a warning and use the available assignments.
 
 ## Notes
 - "Current location" is taken from the latest visit of a hive (Datum desc, ID desc).

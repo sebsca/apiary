@@ -2,6 +2,7 @@
 import { createApiClient } from './api-client.js';
 import { wireCrudForm } from './form-controller.js';
 import { renderSankeyChart } from './sankey-chart.js';
+import { monitoringSeries, formatMonitoringValue } from './monitoring-series.js';
 import { card, fmtDate, htmlesc, joinEscaped, joinValues, parseRoute } from './ui-utils.js';
 
 // ============================================================================
@@ -548,43 +549,66 @@ async function renderHiveMovements() {
   }
 }
 
-async function renderCharts(query) {
+async function renderCharts(query, view = 'weight') {
   setActiveTab('/charts');
   const ranges = { '5y': '5 years', '1y': '1 year', '1m': '1 month', '1w': '1 week', '1d': '1 day' };
   const requested = query.get('range');
   const range = Object.hasOwn(ranges, requested) ? requested : '1w';
+  const environment = view === 'environment';
+  const pagePath = environment ? '#/charts/environment' : '#/charts';
+  const switchPath = environment ? '#/charts' : '#/charts/environment';
   const signal = routeAbortController.signal;
-  app.innerHTML = card('Hive Monitoring', null, `
+  app.innerHTML = card(environment ? 'Environment & Batteries' : 'Hive Monitoring', null, `
     <div class="vstack">
-      <div class="chart-ranges" role="group" aria-label="Select time range">
-        ${Object.entries(ranges).map(([key, label]) => `
-          <button type="button" class="btn${range === key ? ' primary' : ''}"
-            data-navigate="#/charts?range=${key}" aria-pressed="${range === key}">${label}</button>
-        `).join('')}
+      <div class="chart-controls">
+        <div class="chart-ranges" role="group" aria-label="Select time range">
+          ${Object.entries(ranges).map(([key, label]) => `
+            <button type="button" class="btn${range === key ? ' primary' : ''}"
+              data-navigate="${pagePath}?range=${key}" aria-pressed="${range === key}">${label}</button>
+          `).join('')}
+        </div>
+        <button type="button" class="btn chart-view-switch" role="switch"
+          aria-checked="${environment}" data-navigate="${switchPath}?range=${range}">
+          <span class="chart-switch-track" aria-hidden="true"><span class="chart-switch-thumb"></span></span>
+          <span>Humidity, pressure & batteries</span>
+        </button>
       </div>
       <div id="monitoring-charts" class="vstack" aria-busy="true">
-        ${loadingStateHtml('Loading hive measurements…')}
+        ${loadingStateHtml(environment ? 'Loading scale and gateway measurements…' : 'Loading hive measurements…')}
       </div>
     </div>
   `);
   const container = document.getElementById('monitoring-charts');
   try {
     const [data, { renderMonitoringCharts }] = await Promise.all([
-      apiGet({ action: 'charts', range }, { signal }),
+      apiGet({ action: 'charts', range, view }, { signal }),
       import('./monitoring-charts.js')
     ]);
     if (signal.aborted) return;
     container.innerHTML = data.errors.map(error => noticeHtml(error, 'warning')).join('')
-      + (data.charts.length ? data.charts.map((hive, index) => `
+      + (data.charts.length ? data.charts.map((hive, index) => {
+        const measurements = monitoringSeries(hive).filter(series => series.points.length);
+        const summary = measurements.map(series => {
+          const label = environment ? '' : series.key === 'weight' ? 'Weight ' : 'Outside ';
+          return label + formatMonitoringValue(series, series.points.at(-1).y);
+        }).join(' · ');
+        const measuredAt = environment && hive.lastMeasurementTimestamp
+          ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+            .format(new Date(hive.lastMeasurementTimestamp)) : '';
+        return `
         <section class="hive-chart vstack" aria-labelledby="hive-chart-title-${index}">
-          <div class="hstack">
+          <div class="hstack chart-heading">
             <h2 id="hive-chart-title-${index}">${htmlesc(hive.name)}</h2>
-            <span class="subtitle">Weight ${htmlesc(hive.weightPoints.at(-1).y.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }))} kg${hive.temperaturePoints.length ? ` · Outside ${htmlesc(hive.temperaturePoints.at(-1).y.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }))} °C` : ''}</span>
+            <span class="subtitle">${htmlesc(summary)}</span>
           </div>
-          <div id="monitoring-chart-${index}" class="weight-chart" role="region" aria-labelledby="hive-chart-title-${index}"></div>
+          ${measuredAt ? `<p class="subtitle chart-last-measured">Last measured: ${htmlesc(measuredAt)}</p>` : ''}
+          <div id="monitoring-chart-${index}" class="weight-chart" role="region" aria-labelledby="hive-chart-title-${index}"${measurements.length ? '' : ' hidden'}></div>
+          ${measurements.length ? '' : emptyStateHtml('No measurements are available for the selected period.')}
           <div id="chart-error-${index}" class="notice" data-state="error" role="alert" hidden></div>
         </section>
-      `).join('') : emptyStateHtml('No weight measurements are available for the selected period.'));
+      `;
+      }).join('') : emptyStateHtml(environment
+        ? 'No scales or gateways are available.' : 'No weight measurements are available for the selected period.'));
     renderMonitoringCharts(container, data, { apiGet, signal });
   } catch (error) {
     if (!signal.aborted) container.innerHTML = noticeHtml(`Unable to load charts: ${error.message}`, 'error');
@@ -2170,7 +2194,7 @@ async function router() {
   if (path === '/' || path === '//') return renderStandorte();
   if (path === '/hives') return renderHives(r.query);
   if (path === '/movements') return renderHiveMovements();
-  if (path === '/charts') return renderCharts(r.query);
+  if (path === '/charts') return renderCharts(r.query, parts[1] === 'environment' ? 'environment' : 'weight');
   if (path === '/queens') return renderQueens(r.query);
   if (path === '/login') return renderLogin(r);
   if (path === '/account') return renderAccount();

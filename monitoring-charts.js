@@ -1,4 +1,5 @@
 import ApexCharts from 'https://cdn.jsdelivr.net/npm/apexcharts@5.3.6/dist/apexcharts.esm.js';
+import { monitoringSeries, formatMonitoringValue } from './monitoring-series.js';
 
 export function renderMonitoringCharts(container, data, { apiGet, signal }) {
     if (signal.aborted) return;
@@ -10,14 +11,11 @@ export function renderMonitoringCharts(container, data, { apiGet, signal }) {
         border: styles.getPropertyValue('--color-border').trim(),
         grid: styles.getPropertyValue('--color-surface-strong').trim(),
         weight: styles.getPropertyValue('--color-accent').trim(),
-        temperature: styles.getPropertyValue('--color-warning').trim()
+        temperature: styles.getPropertyValue('--color-warning').trim(),
+        humidity: styles.getPropertyValue('--color-info').trim(),
+        pressure: styles.getPropertyValue('--color-accent').trim(),
+        battery: styles.getPropertyValue('--color-warning').trim()
     };
-    const weightFormat = new Intl.NumberFormat(undefined, {
-        minimumFractionDigits: 2, maximumFractionDigits: 2
-    });
-    const temperatureFormat = new Intl.NumberFormat(undefined, {
-        minimumFractionDigits: 1, maximumFractionDigits: 1
-    });
     const axisFormat = new Intl.NumberFormat(undefined, {
         maximumFractionDigits: 0
     });
@@ -95,12 +93,7 @@ export function renderMonitoringCharts(container, data, { apiGet, signal }) {
         if (!Number.isFinite(min) || !Number.isFinite(max)) {
             return null;
         }
-        const axisMin = Math.floor(min);
-        const axisMax = Math.ceil(max);
-        return {
-            min: axisMin,
-            max: axisMax > axisMin ? axisMax : axisMin + 1
-        };
+        return { min, max };
     }
     function mergeRanges(ranges) {
         return ranges.slice().sort((a, b) => a[0] - b[0]).reduce((merged, range) => {
@@ -155,12 +148,15 @@ export function renderMonitoringCharts(container, data, { apiGet, signal }) {
         notice.hidden = false;
     }
     hiveCharts.forEach((hive, index) => {
-        const overviewWeightPoints = hive.weightPoints;
-        const overviewTemperaturePoints = hive.temperaturePoints;
-        let weightPoints = overviewWeightPoints;
-        let temperaturePoints = overviewTemperaturePoints;
-        const hasTemperature = temperaturePoints.length > 0;
-        const series = [{ name: 'Weight', data: weightPoints }];
+        const measurements = monitoringSeries(hive).filter(series => series.points.length);
+        if (!measurements.length) return;
+        const [primary, secondary] = measurements;
+        const overviewPrimaryPoints = primary.points;
+        const overviewSecondaryPoints = secondary?.points ?? [];
+        let primaryPoints = overviewPrimaryPoints;
+        let secondaryPoints = overviewSecondaryPoints;
+        const hasSecondary = secondaryPoints.length > 0;
+        const series = [{ name: primary.label, data: primaryPoints }];
         let scaleTimer;
         let loadTimer;
         let requestVersion = 0;
@@ -168,70 +164,87 @@ export function renderMonitoringCharts(container, data, { apiGet, signal }) {
         let updateGuardTimer;
         let programmaticUpdate = false;
         let rawRanges = [];
-        const rawPoints = { weight: new Map(), temperature: new Map() };
+        const rawPoints = Object.fromEntries(measurements.map(series => [series.key, new Map()]));
         const overviewResolution = range === '1y' || range === '5y'
             ? Math.ceil((toTimestamp - fromTimestamp) / 750) : 0;
         if (overviewResolution === 0) {
-            overviewWeightPoints.forEach(point => rawPoints.weight.set(point.x, point));
-            overviewTemperaturePoints.forEach(point => rawPoints.temperature.set(point.x, point));
+            overviewPrimaryPoints.forEach(point => rawPoints[primary.key].set(point.x, point));
+            overviewSecondaryPoints.forEach(point => rawPoints[secondary.key].set(point.x, point));
             rawRanges = [[fromTimestamp, toTimestamp]];
         }
-        const fullWeightRange = visibleRange(
-            overviewWeightPoints, fromTimestamp, toTimestamp
+        const fullPrimaryRange = visibleRange(
+            overviewPrimaryPoints, fromTimestamp, toTimestamp
         );
-        const fullTemperatureRange = visibleRange(
-            overviewTemperaturePoints, fromTimestamp, toTimestamp
+        const fullSecondaryRange = visibleRange(
+            overviewSecondaryPoints, fromTimestamp, toTimestamp
         );
-        function weightScale(minX, maxX) {
-            const weightRange = visibleRange(weightPoints, minX, maxX)
-                ?? fullWeightRange;
-            const weightMin = Math.floor(weightRange.min);
-            const weightMax = Math.max(weightMin + 1, Math.ceil(weightRange.max));
-            const weightSpan = weightMax - weightMin;
+        function primaryScale(minX, maxX) {
+            const primaryRange = visibleRange(primaryPoints, minX, maxX)
+                ?? fullPrimaryRange;
+            if (primary.key !== 'weight') return measurementScale(primary, primaryRange);
+            const primaryMin = Math.floor(primaryRange.min);
+            const primaryMax = Math.max(primaryMin + 1, Math.ceil(primaryRange.max));
+            const primarySpan = primaryMax - primaryMin;
             return {
-                min: weightMin,
-                max: weightMax,
-                tickAmount: weightSpan,
+                min: primaryMin,
+                max: primaryMax,
+                tickAmount: primarySpan,
                 forceNiceScale: false
             };
         }
+        function measurementScale(measurement, values) {
+            const step = measurement.step;
+            let min = Math.floor(values.min / step + 1e-9) * step;
+            let max = Math.max(min + step, Math.ceil(values.max / step - 1e-9) * step);
+            if (measurement.key === 'humidity') {
+                min = Math.max(0, min);
+                max = Math.min(100, Math.max(min + step, max));
+                if (min >= max) min = Math.max(0, max - step);
+            }
+            return {
+                min: Number(min.toFixed(3)), max: Number(max.toFixed(3)),
+                tickAmount: Math.min(10, Math.max(1, Math.round((max - min) / step))),
+                forceNiceScale: false
+            };
+        }
+        function axisLabels(measurement, scale) {
+            const format = new Intl.NumberFormat(undefined, { maximumFractionDigits: measurement.axisDecimals });
+            return value => {
+                if (measurement.key === 'weight') {
+                    const step = scale.max - scale.min > 5 ? 5 : 1;
+                    const isGridValue = Math.abs(value / step - Math.round(value / step)) < 1e-6;
+                    return isGridValue ? axisFormat.format(value) + ' kg' : '';
+                }
+                return format.format(value) + ' ' + measurement.unit;
+            };
+        }
         function buildYAxes(minX = fromTimestamp, maxX = toTimestamp) {
-            const weightAxis = weightScale(minX, maxX);
-            const temperatureRange = hasTemperature
-                ? visibleRange(temperaturePoints, minX, maxX) ?? fullTemperatureRange
+            const primaryAxis = primaryScale(minX, maxX);
+            const secondaryRange = hasSecondary
+                ? visibleRange(secondaryPoints, minX, maxX) ?? fullSecondaryRange
                 : null;
             const axes = [{
-                seriesName: 'Weight',
-                title: { text: 'Weight (kg)' },
-                decimalsInFloat: 0,
-                labels: {
-                    formatter: value => {
-                        const step = weightAxis.max - weightAxis.min > 5 ? 5 : 1;
-                        const isGridValue = Math.abs(value / step - Math.round(value / step)) < 1e-6;
-                        return isGridValue ? axisFormat.format(value) + ' kg' : '';
-                    }
-                },
-                ...weightAxis
+                seriesName: primary.label,
+                title: { text: `${primary.label} (${primary.unit})` },
+                decimalsInFloat: primary.axisDecimals,
+                labels: { formatter: axisLabels(primary, primaryAxis) },
+                ...primaryAxis
             }];
-            if (temperatureRange) {
-                const temperatureMin = Math.floor(temperatureRange.min / 5) * 5;
-                const temperatureMax = Math.max(
-                    temperatureMin + 5, Math.ceil(temperatureRange.max / 5) * 5
-                );
+            if (secondaryRange) {
+                const secondaryAxis = measurementScale(secondary, secondaryRange);
                 axes.push({
-                    seriesName: 'Outside temperature', opposite: true,
-                    title: { text: 'Outside temperature (°C)' },
-                    decimalsInFloat: 0,
-                    labels: { formatter: value => axisFormat.format(value) + ' °C' },
-                    min: temperatureMin,
-                    max: temperatureMax,
-                    tickAmount: (temperatureMax - temperatureMin) / 5
+                    seriesName: secondary.label, opposite: true,
+                    title: { text: `${secondary.label} (${secondary.unit})` },
+                    decimalsInFloat: secondary.axisDecimals,
+                    labels: { formatter: axisLabels(secondary, secondaryAxis) },
+                    ...secondaryAxis
                 });
             }
             return axes;
         }
-        function buildWeightGridLines(minX = fromTimestamp, maxX = toTimestamp) {
-            const scale = weightScale(minX, maxX);
+        function buildPrimaryGridLines(minX = fromTimestamp, maxX = toTimestamp) {
+            if (primary.key !== 'weight') return { yaxis: [] };
+            const scale = primaryScale(minX, maxX);
             const lines = [];
             const step = scale.max - scale.min > 5 ? 5 : 1;
             for (let value = Math.ceil(scale.min / step) * step; value <= scale.max; value += step) {
@@ -257,7 +270,7 @@ export function renderMonitoringCharts(container, data, { apiGet, signal }) {
                         labels: xAxisLabels(maxX - minX)
                     },
                     yaxis: buildYAxes(minX, maxX),
-                    annotations: buildWeightGridLines(minX, maxX)
+                    annotations: buildPrimaryGridLines(minX, maxX)
                 }, false, false, false).catch(() => showError(index));
             }, 60);
         }
@@ -291,13 +304,13 @@ export function renderMonitoringCharts(container, data, { apiGet, signal }) {
             updateGuardTimer = setTimeout(() => { programmaticUpdate = false; }, 150);
         }
         function applyRawDetails(chartContext, minX, maxX) {
-            weightPoints = renderedPoints(overviewWeightPoints, rawPoints.weight, minX, maxX);
-            temperaturePoints = renderedPoints(
-                overviewTemperaturePoints, rawPoints.temperature, minX, maxX
-            );
-            const updatedSeries = [{ name: 'Weight', data: weightPoints }];
-            if (hasTemperature) {
-                updatedSeries.push({ name: 'Outside temperature', data: temperaturePoints });
+            primaryPoints = renderedPoints(overviewPrimaryPoints, rawPoints[primary.key], minX, maxX);
+            secondaryPoints = secondary ? renderedPoints(
+                overviewSecondaryPoints, rawPoints[secondary.key], minX, maxX
+            ) : [];
+            const updatedSeries = [{ name: primary.label, data: primaryPoints }];
+            if (hasSecondary) {
+                updatedSeries.push({ name: secondary.label, data: secondaryPoints });
             }
             clearTimeout(scaleTimer);
             guardChartUpdate();
@@ -309,7 +322,7 @@ export function renderMonitoringCharts(container, data, { apiGet, signal }) {
                     labels: xAxisLabels(maxX - minX)
                 },
                 yaxis: buildYAxes(minX, maxX),
-                annotations: buildWeightGridLines(minX, maxX)
+                annotations: buildPrimaryGridLines(minX, maxX)
             }, false, false, false).catch(() => showError(index));
         }
         function historyRange(minX, maxX) {
@@ -356,17 +369,18 @@ export function renderMonitoringCharts(container, data, { apiGet, signal }) {
                 const results = await Promise.all(gaps.map(async ([from, to]) => {
                     const data = await apiGet({
                         action: 'charts_data', hive: hive.hiveId, signature: hive.signature,
-                        from, to
+                        device: hive.deviceType ?? 'hive',
+                        ...(hive.sensorId ? { sensor: hive.sensorId } : {}), from, to
                     }, { signal: requestController.signal });
-                    if (!Array.isArray(data.weight) || !Array.isArray(data.temperature)) {
+                    if (!measurements.every(series => Array.isArray(data[series.key]))) {
                         throw new Error('Invalid chart data.');
                     }
                     return { range: [from, to], data };
                 }));
                 if (signal.aborted || version !== requestVersion) return;
                 results.forEach(result => {
-                    result.data.weight.forEach(point => rawPoints.weight.set(point.x, point));
-                    result.data.temperature.forEach(point => rawPoints.temperature.set(point.x, point));
+                    measurements.forEach(series => result.data[series.key].forEach(point =>
+                        rawPoints[series.key].set(point.x, point)));
                     rawRanges.push(result.range);
                 });
                 rawRanges = mergeRanges(rawRanges);
@@ -409,11 +423,11 @@ export function renderMonitoringCharts(container, data, { apiGet, signal }) {
             requestController?.abort();
             requestController = null;
             requestVersion += 1;
-            weightPoints = overviewWeightPoints;
-            temperaturePoints = overviewTemperaturePoints;
-            const overviewSeries = [{ name: 'Weight', data: weightPoints }];
-            if (hasTemperature) {
-                overviewSeries.push({ name: 'Outside temperature', data: temperaturePoints });
+            primaryPoints = overviewPrimaryPoints;
+            secondaryPoints = overviewSecondaryPoints;
+            const overviewSeries = [{ name: primary.label, data: primaryPoints }];
+            if (hasSecondary) {
+                overviewSeries.push({ name: secondary.label, data: secondaryPoints });
             }
             clearTimeout(scaleTimer);
             guardChartUpdate();
@@ -425,11 +439,11 @@ export function renderMonitoringCharts(container, data, { apiGet, signal }) {
                     labels: xAxisLabels(toTimestamp - fromTimestamp)
                 },
                 yaxis: buildYAxes(fromTimestamp, toTimestamp),
-                annotations: buildWeightGridLines(fromTimestamp, toTimestamp)
+                annotations: buildPrimaryGridLines(fromTimestamp, toTimestamp)
             }, false, false, false).catch(() => showError(index));
         }
-        if (hasTemperature) {
-            series.push({ name: 'Outside temperature', data: temperaturePoints });
+        if (hasSecondary) {
+            series.push({ name: secondary.label, data: secondaryPoints });
         }
         let chart;
         let rendered;
@@ -470,21 +484,21 @@ export function renderMonitoringCharts(container, data, { apiGet, signal }) {
                     }
                 },
                 series,
-                annotations: buildWeightGridLines(),
-                colors: hasTemperature ? [theme.weight, theme.temperature] : [theme.weight],
+                annotations: buildPrimaryGridLines(),
+                colors: measurements.map(series => theme[series.color]),
                 stroke: {
                     curve: 'straight',
-                    width: hasTemperature ? [2, 1.5] : 2,
-                    dashArray: hasTemperature ? [0, 4] : 0
+                    width: hasSecondary ? [2, 1.5] : 2,
+                    dashArray: hasSecondary ? [0, 4] : 0
                 },
                 markers: {
-                    size: hasTemperature
-                        ? [weightPoints.length === 1 ? 4 : 0, temperaturePoints.length === 1 ? 4 : 0]
-                        : weightPoints.length === 1 ? 4 : 0,
+                    size: hasSecondary
+                        ? [primaryPoints.length === 1 ? 4 : 0, secondaryPoints.length === 1 ? 4 : 0]
+                        : primaryPoints.length === 1 ? 4 : 0,
                     hover: { size: 4 }
                 },
                 dataLabels: { enabled: false },
-                legend: { show: hasTemperature, position: 'top' },
+                legend: { show: hasSecondary, position: primary.key === 'weight' ? 'top' : 'bottom' },
                 responsive: [{
                     breakpoint: 600,
                     options: { legend: { position: 'bottom' } }
@@ -492,7 +506,7 @@ export function renderMonitoringCharts(container, data, { apiGet, signal }) {
                 grid: {
                     borderColor: theme.border,
                     xaxis: { lines: { show: false } },
-                    yaxis: { lines: { show: false } }
+                    yaxis: { lines: { show: primary.key !== 'weight' } }
                 },
                 xaxis: {
                     type: 'datetime',
@@ -509,12 +523,12 @@ export function renderMonitoringCharts(container, data, { apiGet, signal }) {
                         if (!Number.isFinite(timestamp)) {
                             return '';
                         }
-                        const weight = nearestPoint(weightPoints, timestamp);
-                        const temperature = nearestPoint(temperaturePoints, timestamp);
+                        const primaryPoint = nearestPoint(primaryPoints, timestamp);
+                        const secondaryPoint = nearestPoint(secondaryPoints, timestamp);
                         return `<div class="chart-tooltip">
                             <div class="chart-tooltip-date">${dateTimeFormat.format(new Date(timestamp))}</div>
-                            ${tooltipRow('Weight', weight, 'weight', value => weightFormat.format(value) + ' kg', timestamp)}
-                            ${tooltipRow('Outside temperature', temperature, 'temperature', value => temperatureFormat.format(value) + ' °C', timestamp)}
+                            ${tooltipRow(primary.label, primaryPoint, primary.color, value => formatMonitoringValue(primary, value), timestamp)}
+                            ${secondary ? tooltipRow(secondary.label, secondaryPoint, secondary.color, value => formatMonitoringValue(secondary, value), timestamp) : ''}
                         </div>`;
                     }
                 }

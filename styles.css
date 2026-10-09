@@ -1522,6 +1522,56 @@ fieldset:disabled .segmented-button span {
 }
 
 /* Hive monitoring */
+.chart-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.chart-view-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  text-align: left;
+}
+
+.chart-switch-track {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  width: 36px;
+  height: 22px;
+  padding: 3px;
+  border-radius: 12px;
+  background: var(--color-border-strong);
+}
+
+.chart-switch-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--color-surface);
+  transition: transform var(--transition-fast);
+}
+
+.chart-view-switch[aria-checked="true"] .chart-switch-track {
+  background: var(--color-accent);
+}
+
+.chart-view-switch[aria-checked="true"] .chart-switch-thumb {
+  transform: translateX(14px);
+}
+
+.chart-heading {
+  flex-wrap: wrap;
+}
+
+.chart-last-measured {
+  margin: 0;
+}
+
 .chart-ranges {
   display: flex;
   flex-wrap: wrap;
@@ -1573,6 +1623,9 @@ fieldset:disabled .segmented-button span {
 
 .chart-tooltip-weight { background: var(--color-accent); }
 .chart-tooltip-temperature { background: var(--color-warning); }
+.chart-tooltip-humidity { background: var(--color-info); }
+.chart-tooltip-pressure { background: var(--color-accent); }
+.chart-tooltip-battery { background: var(--color-warning); }
 .chart-tooltip-value { font-weight: 600; }
 
 .chart-tooltip-measured {
